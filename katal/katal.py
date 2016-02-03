@@ -2992,22 +2992,22 @@ def size_as_str(_size):
     """
     if _size == 0:
         res = "0 byte"
-    elif _size < 1000:
+    elif _size < 1e3:
         res = "{0} bytes".format(_size)
-    elif _size < 9000:
-        res = "{0} kB ({1} bytes)".format(_size/1000.0, _size)
-    elif _size < 9000000:
-        res = "~{0:.2f} MB ({1} bytes)".format(_size/1000000.0, _size)
-    elif _size < 9000000000:
-        res = "~{0:.2f} GB ({1} bytes)".format(_size/1000000000.0, _size)
-    elif _size < 9000000000000:
-        res = "~{0:.2f} TB ({1} bytes)".format(_size/1000000000000.0, _size)
-    elif _size < 9000000000000000:
-        res = "~{0:.2f} PB ({1} bytes)".format(_size/1000000000000000.0, _size)
-    elif _size < 9000000000000000000:
-        res = "~{0:.2f} EB ({1} bytes)".format(_size/1000000000000000000.0, _size)
+    elif _size < 9e3:
+        res = "{0} kB ({1} bytes)".format(_size/1e3, _size)
+    elif _size < 9e6:
+        res = "~{0:.2f} MB ({1} bytes)".format(_size/1e6, _size)
+    elif _size < 9e9:
+        res = "~{0:.2f} GB ({1} bytes)".format(_size/1e9, _size)
+    elif _size < 9e12:
+        res = "~{0:.2f} TB ({1} bytes)".format(_size/1e12, _size)
+    elif _size < 9e15:
+        res = "~{0:.2f} PB ({1} bytes)".format(_size/1e15, _size)
+    elif _size < 9e18:
+        res = "~{0:.2f} EB ({1} bytes)".format(_size/1e18, _size)
     else:
-        res = "~{0:.2f} ZB ({1} bytes)".format(_size/1000000000000000000000.0, _size)
+        res = "~{0:.2f} ZB ({1} bytes)".format(_size/1e21, _size)
 
     return res
 
