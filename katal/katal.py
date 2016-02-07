@@ -993,6 +993,17 @@ class Filter:
 
         list_names = set(name for _, _, name in TARGET_DB.items())
 
+        # to don't have to compile the regex every time
+        date_regex = getattr(add_keywords_in_targetstr, 'date_regex',
+                            re.compile(r"%d\((.*?)\)")) # Match '%d(format)'
+        ddate_regex = getattr(add_keywords_in_targetstr, 'ddate_regex',
+                            re.compile(r"%dd\((.*?)\)")) # Match '%d(format)'
+
+        def date_sub(match):
+            return date.strftime(match.group(1))
+        def ddate_sub(match):
+            return remove_illegal_characters(date.strftime(match.group(1)))
+
         def return_match(name):
             res = name
             size = os.stat(name).st_size
@@ -1002,6 +1013,16 @@ class Filter:
             basename, ext = get_filename_and_extension(os.path.basename(name))
 
             # beware : order matters !
+            res = date_regex.sub(date_sub, res)
+            res = ddate_regex.sub(ddate_sub, res)
+
+            res = res.replace("%Y", date.strftime("%Y"))
+            res = res.replace("%m", date.strftime("%m"))
+            res = res.replace("%d", date.strftime("%d"))
+
+            res = res.replace("%nn", remove_illegal_characters(os.path.basename(filename_no_extens)))
+            res = res.replace("%n", os.path.basename(filename_no_extens))
+
             res = res.replace("%ht", hex(time.timestamp())[2:])
             res = res.replace("%h", hashfile64(name))
 
@@ -1129,11 +1150,11 @@ def action__add():
 
         RETURNED VALUE
                 (int) 0 if success, -1 if an error occured.
+                                                                                  add_keywords_in_targetstr.ddate_regex = ddate_regex
+
+                                                                                      def date_sub(f an error occured.
     """
     LOGGER.info("  = copying data =")
-
-    db_connection = sqlite3.connect(get_database_fullname())
-    db_cursor = db_connection.cursor()
 
     if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES*CST__FREESPACE_MARGIN:
         LOGGER.warning("    ! Not enough space on disk. Stopping the program.")
@@ -1146,13 +1167,6 @@ def action__add():
 
         complete_source_filename = SELECT[hashid].fullname
         target_name = os.path.join(normpath(ARGS.targetpath), SELECT[hashid].targetname)
-
-        sourcedate = datetime.utcfromtimestamp(os.path.getmtime(complete_source_filename))
-        sourcedate = sourcedate.replace(second=0, microsecond=0)
-
-        # converting the datetime object in epoch value (=the number of seconds from 1970-01-01 :
-        sourcedate -= datetime(1970, 1, 1)
-        sourcedate = sourcedate.total_seconds()
 
         if not ARGS.off:
             if CFG_PARAMETERS["target"]["mode"] == "nocopy":
@@ -1167,14 +1181,14 @@ def action__add():
                 LOGGER.info("    ... (%s/%s) about to " "copy \"%s\" to \"%s\" .",
                             index+1, len_select, complete_source_filename, target_name)
                 shutil.copyfile(complete_source_filename, target_name)
-                os.utime(target_name, (sourcedate, sourcedate))
+                shutil.copystat(complete_source_filename, target_name)
 
             elif CFG_PARAMETERS["target"]["mode"] == "move":
                 # moving the file :
                 LOGGER.info("    ... (%s/%s) about to " "move \"%s\" to \"%s\" .",
                             index+1, len_select, complete_source_filename, target_name)
+                # shutil.move preserve metadata
                 shutil.move(complete_source_filename, target_name)
-                os.utime(target_name, (sourcedate, sourcedate))
 
         files_to_be_added.append((hashid,
                                   SELECT[hashid].partialhashid,
@@ -1186,17 +1200,22 @@ def action__add():
 
     LOGGER.info("    = all files have been copied, let's update the database...")
 
+    db_connection = sqlite3.connect(get_database_fullname())
+    db_cursor = db_connection.cursor()
+
     try:
         if not ARGS.off:
             db_cursor.executemany('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', files_to_be_added)
 
     except sqlite3.IntegrityError as exception:
-        LOGGER.error("!!! An error occured while writing the database : %s\n"
-                     "!!! files to be added", str(exception))
+        db_connection.close()
+
+        LOGGER.exception("!!! An error occured while writing the database : ")
+        LOGGER.error("!!! Files to be added :")
         for file_to_be_added in files_to_be_added:
             LOGGER.error("     ! hashid=%s; partialhashid=%s; size=%s; name=%s; sourcename=%s; "
                          "sourcedate=%s; tagsstr=%s", *file_to_be_added)
-        raise KatalError("An error occured while writing the database : "+str(exception))
+        raise KatalError("An error occured while writing the database : " + str(exception))
 
     db_connection.commit()
     db_connection.close()
@@ -2049,16 +2068,38 @@ def add_keywords_in_targetstr(srcstring,
                 (str)the expected string
     """
     res = srcstring
+    date = datetime.strptime(date, CST__DTIME_FORMAT)
+
+    # to don't have to compile the regex every time
+    date_regex = getattr(add_keywords_in_targetstr, 'date_regex',
+                         re.compile(r"%d\((.*?)\)")) # Match '%d(format)'
+    ddate_regex = getattr(add_keywords_in_targetstr, 'ddate_regex',
+                         re.compile(r"%dd\((.*?)\)")) # Match '%d(format)'
+    add_keywords_in_targetstr.date_regex = date_regex
+    add_keywords_in_targetstr.ddate_regex = ddate_regex
+
+    def date_sub(match):
+        return date.strftime(match.group(1))
+    def ddate_sub(match):
+        return remove_illegal_characters(date.strftime(match.group(1)))
 
     # beware : order matters !
-    res = res.replace("%ht",
-                      hex(int(datetime.strptime(date,
-                                                CST__DTIME_FORMAT).timestamp()))[2:])
+    res = date_regex.sub(date_sub, res)
+    res = ddate_regex.sub(ddate_sub, res)
+
+    res = res.replace("%Y", date.strftime("%Y"))
+    res = res.replace("%m", date.strftime("%m"))
+    res = res.replace("%d", date.strftime("%d"))
+
+    res = res.replace("%ht", hex(int(date.timestamp()))[2:])
 
     res = res.replace("%h", hashid)
 
-    res = res.replace("%ff", remove_illegal_characters(filename_no_extens))
+    res = res.replace("%nn", remove_illegal_characters(os.path.basename(filename_no_extens)))
     res = res.replace("%f", filename_no_extens)
+
+    res = res.replace("%nn", remove_illegal_characters(os.path.basename(filename_no_extens)))
+    res = res.replace("%n", os.path.basename(filename_no_extens))
 
     res = res.replace("%pp", remove_illegal_characters(path))
     res = res.replace("%p", path)
@@ -2070,9 +2111,7 @@ def add_keywords_in_targetstr(srcstring,
 
     res = res.replace("%dd", remove_illegal_characters(date))
 
-    res = res.replace("%t",
-                      str(int(datetime.strptime(date,
-                                                CST__DTIME_FORMAT).timestamp())))
+    res = res.replace("%t", str(int(date.timestamp())))
 
     res = res.replace("%i",
                       remove_illegal_characters(str(database_index)))
@@ -2224,10 +2263,6 @@ def create_target_name(parameters,
 
         see the available keywords in the documentation.
             (see documentation:configuration file)
-
-        caveat : in the .ini files, '%' have to be written twice (as in
-                 '%%p', e.g.) but Python reads it as if only one % was
-                 written.
         ________________________________________________________________________
 
         PARAMETERS
@@ -2251,14 +2286,14 @@ def create_target_name(parameters,
         RETURNED VALUE
                 (str)name
     """
-    return(add_keywords_in_targetstr(srcstring=parameters["target"]["name of the target files"],
+    return add_keywords_in_targetstr(srcstring=parameters["target"]["name of the target files"],
                                      hashid=hashid,
                                      filename_no_extens=filename_no_extens,
                                      path=path,
                                      extension=extension,
                                      _size=_size,
                                      date=date,
-                                     database_index=database_index))
+                                     database_index=database_index)
 
 #/////////////////////////////////////////////////////////////////////////////////////////
 def create_target_name_and_tags(parameters,
@@ -2482,7 +2517,7 @@ def eval_filters(filters):
                                                                               exception))
 
 #///////////////////////////////////////////////////////////////////////////////
-def fill_select(debug_datatime=None):
+def fill_select():
     """
         fill_select()
         ________________________________________________________________________
@@ -2491,9 +2526,7 @@ def fill_select(debug_datatime=None):
         the source path. This function is used by action__select() .
         ________________________________________________________________________
 
-        PARAMETERS
-                o debug_datatime : None (normal value) or a dict of CST__DTIME_FORMAT
-                                   strings if in debug/test mode.
+        no PARAMETERS
 
         RETURNED VALUE
                 (int) the number of discarded files
@@ -2531,6 +2564,7 @@ def fill_select(debug_datatime=None):
 
             else:
                 fname_no_extens, extension = get_filename_and_extension(normpath(filename))
+                print(fname_no_extens)
 
                 # if we know the total amount of files to be selected (see the --infos option),
                 # we can add the percentage done :
@@ -2569,6 +2603,19 @@ def fill_select(debug_datatime=None):
                                         prefix, fullname)
 
                     elif tobeadded:
+                        dict_params = {
+                            'parameters': CFG_PARAMETERS,
+                            'hashid': hashid,
+                            'filename_no_extens': fname_no_extens,
+                            'path': dirpath,
+                            'extension': extension,
+                            '_size': size,
+                            'date': time.strftime(CST__DTIME_FORMAT),
+                            'database_index': len(TARGET_DB) + len(SELECT)
+                        }
+                        print('ùùùùùùùùùùùùùùùùùùùùùùùùùù')
+                        print(create_target_name(**dict_params))
+
                         # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
                         # ok, let's add <filename> to SELECT...
                         SELECT[hashid] = \
@@ -2579,26 +2626,9 @@ def fill_select(debug_datatime=None):
                                        extension=extension,
                                        size=size,
                                        date=time.strftime(CST__DTIME_FORMAT),
-                                       targetname= \
-                                          create_target_name(parameters=CFG_PARAMETERS,
-                                                             hashid=hashid,
-                                                             filename_no_extens=fname_no_extens,
-                                                             path=dirpath,
-                                                             extension=extension,
-                                                             _size=size,
-                                                             date=time.strftime(CST__DTIME_FORMAT),
-                                                             database_index=len(TARGET_DB) + \
-                                                                             len(SELECT)),
-                                       targettags= \
-                                          create_target_tags(parameters=CFG_PARAMETERS,
-                                                             hashid=hashid,
-                                                             filename_no_extens=fname_no_extens,
-                                                             path=dirpath,
-                                                             extension=extension,
-                                                             _size=size,
-                                                             date=time.strftime(CST__DTIME_FORMAT),
-                                                             database_index=len(TARGET_DB) + \
-                                                                             len(SELECT)))
+                                       targetname=create_target_name(**dict_params),
+                                       targettags=create_target_tags(**dict_params),
+                                       )
 
                         LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
                                     prefix, fullname, len(SELECT))
@@ -2613,7 +2643,7 @@ def fill_select(debug_datatime=None):
                         number_of_discarded_files += 1
 
                         if ARGS.verbosity == 'high':
-                            LOGGER.info("    - %s (similar hashid in the database) "
+                            LOGGER.debug("    - %s (similar hashid in the database) "
                                         " discarded \"%s\"", prefix, fullname)
 
 
@@ -2951,7 +2981,7 @@ def main_actions():
                       "(\"{1}\") ? (y/N) ".format(CFG_PARAMETERS["target"]["mode"],
                                                   ARGS.targetpath))
 
-            if answer in ("y", "yes"):
+            if answer in ("y", "yes", "Y"):
                 action__add()
                 show_infos_about_target_path()
 
