@@ -1100,6 +1100,201 @@ class Filter:
 #///////////////////////////////////////////////////////////////////////////////
 
 
+class SelectElement:
+    def __init__(self, fullname):
+        global SELECT_SIZE_IN_BYTES
+
+        self.fullname = normpath(fullname)
+        self.path, filename = os.path.split(self.fullname)
+        self.filename_no_extens, self.extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
+        self.dirpath = os.path.dirname(fullname)
+        self.size = os.stat(fullname).st_size
+        self.time = os.stat(fullname).st_mtime
+        # TODO: storing th etimestampl may be more practical
+        self.date = datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
+        self.database_index = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
+
+        self.partialhashid = hashfile64(filename=self.fullname,
+                                        stop_after=CST__PARTIALHASHID_BYTESNBR),
+        self.hashid = hashfile64(filename=self.fullname)
+
+        self.targetname = self.create_target_name()
+        self.targettags = self.create_target_tags()
+
+        SELECT_SIZE_IN_BYTES += self.size
+
+    def create_target_name(self):
+        """
+            create_target_name()
+            ________________________________________________________________________
+
+            Create the name of a file (a target file) from various informations
+            given by the parameters. The function reads the string stored in
+            parameters["target"]["name of the target files"] and replaces some
+            keywords in the string by the parameters given to this function.
+
+            see the available keywords in the documentation.
+                (see documentation:configuration file)
+
+            caveat : in the .ini files, '%' have to be written twice (as in
+                    '%%p', e.g.) but Python reads it as if only one % was
+                    written.
+            ________________________________________________________________________
+
+            PARAMETERS
+                    o parameters                   : an object returned by
+                                                    read_parameters_from_cfgfile(),
+                                                    like CFG_PARAMETERS
+                    o hashid                       : (str)
+                    o filename_no_extens           : (str)
+                    o path                         : (str
+                    o extension                    : (str)
+                    o _size                        : (int)
+                    o date                         : (str) see CST__DTIME_FORMAT
+                    o database_index               : (int)
+
+            About the underscore before "_size" :
+            confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
+            " If a function argument's name clashes with a reserved keyword, it is generally
+            " better to append a single trailing underscore rather than use an abbreviation
+            " or spelling corruption.
+
+            RETURNED VALUE
+                    (str)name
+        """
+        return self.add_keywords_in_targetstr(parameters["target"]["name of the target files"])
+
+    #/////////////////////////////////////////////////////////////////////////////////////////
+    def create_target_tags(self):
+        """
+            create_target_tags()
+            ________________________________________________________________________
+
+            Create the tags of a file (a target file) from various informations
+            given by the parameters. The function reads the string stored in
+            parameters["target"]["tags"] and replaces some
+            keywords in the string by the parameters given to this function.
+
+            see the available keywords in the documentation.
+                (see documentation:configuration file)
+
+            caveat : in the .ini files, '%' have to be written twice (as in
+                    '%%p', e.g.) but Python reads it as if only one % was
+                    written.
+            ________________________________________________________________________
+
+            PARAMETERS
+                    o parameters                   : an object returned by
+                                                    read_parameters_from_cfgfile(),
+                                                    like CFG_PARAMETERS
+                    o hashid                       : (str)
+                    o filename_no_extens           : (str)
+                    o path                         : (str
+                    o extension                    : (str)
+                    o _size                        : (int)
+                    o date                         : (str) see CST__DTIME_FORMAT
+                    o database_index               : (int)
+
+            About the underscore before "_size" :
+            confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
+            " If a function argument's name clashes with a reserved keyword, it is generally
+            " better to append a single trailing underscore rather than use an abbreviation
+            " or spelling corruption.
+
+            RETURNED VALUE
+                    (str)name
+        """
+        return self.add_keywords_in_targetstr(srcstring=parameters["target"]["tags"])
+
+    def __eq__(self, other):
+        if self.hashid != other.hashid:
+            return False
+        elif self.partialhashid != other.partialhashid:
+            return False
+        else:
+            # We have to do a bit-to-bit comparison
+            return filecmp.cmp(element.filename, TARGET_DB[hashid][2], shallow=False)
+
+    def __hash__(self):
+        return hash(hashid)
+
+    #///////////////////////////////////////////////////////////////////////////////
+    def __set__(self, value):
+        """
+        setattr(self, value)
+        __________________________________________________________________________
+
+        The object should be immutable, so that its hash doesn't change. So this
+        function should prevent any attribute change.
+        However, this is not a very strong protection, but it should prevent most
+        of changes
+        """
+        raise TypeError("Can't set attributes of 'SelectElement' type")
+
+    def add_keywords_in_targetstr(self, srcstring):
+        """
+            add_keywords_in_targetstr()
+            ________________________________________________________________________
+
+            The function replaces some keywords in the string by the parameters given
+            to this function.
+            The function returned a string which may be used to create target files.
+
+            see the available keywords in the documentation.
+                (see documentation:configuration file)
+            ________________________________________________________________________
+
+            PARAMETERS
+                    o srcstring                    : (str)
+                    o hashid                       : (str)
+                    o filename_no_extens           : (str)
+                    o path                         : (str
+                    o extensiont : in the .ini files, '%' have to be written twice (as in
+                                    '%%p', e.g.) but Python reads it as if only one % was
+                                                    written.
+                                                    : (str)
+                    o _size                        : (int)
+                    o date                         : (str) see CST__DTIME_FORMAT
+                    o database_index               : (int)
+
+            About the underscore before "_size" :
+            confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
+            " If a function argument's name clashes with a reserved keyword, it is generally
+            " better to append a single trailing underscore rather than use an abbreviation
+            " or spelling corruption.
+
+            RETURNED VALUE
+                    (str)the expected string
+        """
+        res = srcstring
+
+        # beware : order matters !
+        res = res.replace("%ht", hex(int(self.time))[2:])
+
+        res = res.replace("%h", self.hashid)
+
+        res = res.replace("%ff", remove_illegal_characters(self.filename_no_extens))
+        res = res.replace("%f", self.filename_no_extens)
+
+        res = res.replace("%pp", remove_illegal_characters(self.path))
+        res = res.replace("%p", self.path)
+
+        res = res.replace("%ee", remove_illegal_characters(self.extension))
+        res = res.replace("%e", self.extension)
+
+        res = res.replace("%s", str(self.size))
+
+        res = res.replace("%dd", remove_illegal_characters(self.date))
+
+        res = res.replace("%t", str(int(self.time)))
+
+        res = res.replace("%i", str(self.database_index))
+
+        return res
+
+    #///////////////////////////////////////////////////////////////////////////////
+
+
 ################################################################################
 class KatalError(BaseException):
     """
@@ -2518,7 +2713,7 @@ def fill_select(debug_datatime=None):
             # gathering informations about filename :
             # ..................................................................
             file_index += 1
-            fullname = os.path.join(normpath(dirpath), filename)
+            fullname = os.path.join(dirpath, filename)
 
             # ..................................................................
             # protection against the FileNotFoundError exception.
@@ -2536,7 +2731,7 @@ def fill_select(debug_datatime=None):
                 # we can add the percentage done :
                 prefix = ""
                 if INFOS_ABOUT_SRC_PATH[1] is not None and INFOS_ABOUT_SRC_PATH[1] != 0:
-                    prefix = "[{0:.4f}%]".format(file_index/INFOS_ABOUT_SRC_PATH[1]*100.0)
+                    prefix = "[{0:.4f}%]".format(file_index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
 
                 # ..................................................................
                 # what should we do with 'filename' ?
@@ -2606,6 +2801,114 @@ def fill_select(debug_datatime=None):
                                     size, time.strftime(CST__DTIME_FORMAT))
 
                         SELECT_SIZE_IN_BYTES += size
+
+                    else:
+                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+                        # tobeadded is False : let's discard <filename> :
+                        number_of_discarded_files += 1
+
+                        if ARGS.verbosity == 'high':
+                            LOGGER.info("    - %s (similar hashid in the database) "
+                                        " discarded \"%s\"", prefix, fullname)
+
+
+    return fill_select__checks(number_of_discarded_files=number_of_discarded_files,
+                               prefix=prefix,
+                               fullname=fullname)
+
+#///////////////////////////////////////////////////////////////////////////////
+def fill_select2(debug_datatime=None):
+    """
+        fill_select()
+        ________________________________________________________________________
+
+        Fill SELECT and SELECT_SIZE_IN_BYTES from the files stored in
+        the source path. This function is used by action__select() .
+        ________________________________________________________________________
+
+        PARAMETERS
+                o debug_datatime : None (normal value) or a dict of CST__DTIME_FORMAT
+                                   strings if in debug/test mode.
+
+        RETURNED VALUE
+                (int) the number of discarded files
+    """
+    global SELECT, SELECT_SIZE_IN_BYTES
+
+    source_path = CFG_PARAMETERS["source"]["path"]
+
+    SELECT = {}  # see the SELECT format in the documentation:selection
+    SELECT_SIZE_IN_BYTES = 0
+    number_of_discarded_files = 0
+
+    # these variables will be used by fill_select__checks() too.
+    prefix = ""
+    fullname = ""
+
+    file_index = 0  # number of the current file in the source directory.
+    for dirpath, _, filenames in os.walk(normpath(source_path)):
+        for filename in filenames:
+            # ..................................................................
+            # gathering informations about filename :
+            # ..................................................................
+            file_index += 1
+            fullname = os.path.join(dirpath, filename)
+
+            # ..................................................................
+            # protection against the FileNotFoundError exception.
+            # This exception would be raised on broken symbolic link on the
+            #   "size = os.stat(normpath(fullname)).st_size" line (see below).
+            # ..................................................................
+            if not os.path.exists(fullname):
+                LOGGER.warning("    ! browsing %s, an error occured : "
+                               "can't read the file \"%s\"", source_path, fullname)
+
+            else:
+
+                # if we know the total amount of files to be selected (see the --infos option),
+                # we can add the percentage done :
+                prefix = ""
+                if INFOS_ABOUT_SRC_PATH[1] is not None and INFOS_ABOUT_SRC_PATH[1] != 0:
+                    prefix = "[{0:.4f}%]".format(file_index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
+
+                # ..................................................................
+                # what should we do with 'filename' ?
+                # ..................................................................
+                if not FILTER(fullname):
+                    # ... nothing : incompatibility with at least one filter :
+                    number_of_discarded_files += 1
+
+                    if ARGS.verbosity == 'high':
+                        LOGGER.info("    - %s discarded \"%s\" "
+                                    ": incompatibility with the filter(s)",
+                                    prefix, fullname)
+                else:
+                    element = SelectElement(fullname)
+                    # 'filename' being compatible with the filters, let's try
+                    # to add it in the datase :
+                    tobeadded = thefilehastobeadded__db(element)
+
+                    if tobeadded and hashid in SELECT:
+                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+                        # tobeadded is True but hashid is already in SELECT; let's discard
+                        # <filename> :
+                        number_of_discarded_files += 1
+
+                        if ARGS.verbosity == 'high':
+                            LOGGER.info("    - %s (similar hashid among the files to be copied, "
+                                        "in the source directory) discarded \"%s\"",
+                                        prefix, fullname)
+
+                    elif tobeadded:
+                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+                        # ok, let's add <filename> to SELECT...
+                        SELECT[element.hashid] = element
+
+                        LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
+                                    prefix, fullname, len(SELECT))
+                        LOGGER.info("       size=%s; date=%s",
+                                    element.size, element.date)
+
 
                     else:
                         # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -3599,6 +3902,60 @@ def thefilehastobeadded__db(filename, _size):
                     src_hashid)
 
     return (False, None, None)
+
+#///////////////////////////////////////////////////////////////////////////////
+def thefilehastobeadded__db2(filename, _size):
+    """
+        thefilehastobeadded__db()
+        ________________________________________________________________________
+
+        Return True if the file isn't already known in the database.
+        ________________________________________________________________________
+
+        PARAMETERS
+                o filename     : (str) file's name
+                o _size         : (int) file's size, in bytes.
+
+        About the underscore before "_size" :
+        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
+          " If a function argument's name clashes with a reserved keyword, it is generally
+          " better to append a single trailing underscore rather than use an abbreviation
+          " or spelling corruption.
+
+        RETURNED VALUE
+                either (False, None, None)
+                either (True, partial hashid, hashid)
+    """
+    # (1) how many file(s) in the database have a size equal to _size ?
+    # a list of hashid(s) :
+    res = [hashid for hashid in TARGET_DB if TARGET_DB[hashid][1] == element.size]
+
+    if not res:
+        return True
+
+    # (2) how many file(s) among those in <res> have a partial hashid equal
+    # to the partial hashid of filename ?
+    new_res = [hashid for hashid in res if TARGET_DB[hashid][0] == element.partialhashid]
+
+    res = new_res
+    if not res:
+        return True
+
+    # (3) how many file(s) among those in <res> have an hashid equal to the
+    # hashid of filename ?
+    new_res = [hashid for hashid in res if hashid == element.hashid]
+
+    res = new_res
+    if not res:
+        return True
+
+    if ARGS.strictcmp:
+        # (4) bit-to-bit comparision :
+        return all(not filecmp.cmp(element.filename, TARGET_DB[hashid][2], shallow=False)
+                   for hashid in res)
+
+    # else, if some files stay, they must be equal
+    return False
 
 #///////////////////////////////////////////////////////////////////////////////
 def welcome(timestamp_start):
