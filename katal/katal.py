@@ -215,10 +215,10 @@ CST__PARTIALHASHID_BYTESNBR = 1000000
 
 # string used to create the database :
 CST__SQL__CREATE_DB = ('CREATE TABLE dbfiles ('
-                       'hashid varchar(44) PRIMARY KEY UNIQUE, '
-                       'partialhashid varchar(44), '
+                       'hashid TEXT , '
+                       'partialhashid TEXT, '
                        'size INTEGER, '
-                       'name TEXT UNIQUE, '
+                       'targetname TEXT UNIQUE, '
                        'sourcename TEXT, sourcedate INTEGER, tagsstr TEXT)')
 
 CST__TAG_SEPARATOR = ";"  # symbol used in the database between two tags.
@@ -1100,30 +1100,40 @@ class Filter:
 #///////////////////////////////////////////////////////////////////////////////
 
 
-class SelectElement:
-    def __init__(self, fullname):
-        global SELECT_SIZE_IN_BYTES
+SelectTuple = namedtuple('SELECTELEMENT', ["fullname",
+                                             "partialhashid",
+                                             "dirpath",
+                                             "filename_no_extens",
+                                             "extension",
+                                             "size",
+                                             "date",
+                                             "targetname",
+                                             "targettags",])
+class SelectElement(SelectTuple):
+    def __new__(self, fullname):
+        fullname = normpath(fullname)
 
-        self.fullname = normpath(fullname)
-        self.path, filename = os.path.split(self.fullname)
-        self.filename_no_extens, self.extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
-        self.dirpath = os.path.dirname(fullname)
-        self.size = os.stat(fullname).st_size
-        self.time = os.stat(fullname).st_mtime
+        data = {}
+        data['fullname'] = fullname
+        data['dirpath'], filename = os.path.split(fullname)
+        data['filename_no_extens'], data['extension'] = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
+        data['size'] = os.stat(fullname).st_size
+        data['time'] = os.stat(fullname).st_mtime
         # TODO: storing th etimestampl may be more practical
-        self.date = datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
-        self.database_index = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
+        data['date'] = datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
+        data['database_index'] = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
 
-        self.partialhashid = hashfile64(filename=self.fullname,
-                                        stop_after=CST__PARTIALHASHID_BYTESNBR),
-        self.hashid = hashfile64(filename=self.fullname)
+        data['partialhashid'] = hashfile64(filename=self.fullname,
+                                   stop_after=CST__PARTIALHASHID_BYTESNBR),
+        data['hashid'] = hashfile64(filename=self.fullname)
 
-        self.targetname = self.create_target_name()
-        self.targettags = self.create_target_tags()
+        data['targetname'] = self.create_target_name(data)
+        data['targettags'] = self.create_target_tags(data)
 
-        SELECT_SIZE_IN_BYTES += self.size
+        return super().__new__(**data)
 
-    def create_target_name(self):
+    @staticmethod
+    def create_target_name(self, data):
         """
             create_target_name()
             ________________________________________________________________________
@@ -1162,10 +1172,11 @@ class SelectElement:
             RETURNED VALUE
                     (str)name
         """
-        return self.add_keywords_in_targetstr(parameters["target"]["name of the target files"])
+        return self.add_keywords_in_targetstr(CONFIG["target"]["name of the target files"], data)
 
     #/////////////////////////////////////////////////////////////////////////////////////////
-    def create_target_tags(self):
+    @staticmethod
+    def create_target_tags(self, data):
         """
             create_target_tags()
             ________________________________________________________________________
@@ -1204,34 +1215,10 @@ class SelectElement:
             RETURNED VALUE
                     (str)name
         """
-        return self.add_keywords_in_targetstr(srcstring=parameters["target"]["tags"])
+        return self.add_keywords_in_targetstr(CONFIG["target"]["tags"], data)
 
-    def __eq__(self, other):
-        if self.hashid != other.hashid:
-            return False
-        elif self.partialhashid != other.partialhashid:
-            return False
-        else:
-            # We have to do a bit-to-bit comparison
-            return filecmp.cmp(element.filename, TARGET_DB[hashid][2], shallow=False)
-
-    def __hash__(self):
-        return hash(hashid)
-
-    #///////////////////////////////////////////////////////////////////////////////
-    def __set__(self, value):
-        """
-        setattr(self, value)
-        __________________________________________________________________________
-
-        The object should be immutable, so that its hash doesn't change. So this
-        function should prevent any attribute change.
-        However, this is not a very strong protection, but it should prevent most
-        of changes
-        """
-        raise TypeError("Can't set attributes of 'SelectElement' type")
-
-    def add_keywords_in_targetstr(self, srcstring):
+    @staticmethod
+    def add_keywords_in_targetstr(srcstring, data):
         """
             add_keywords_in_targetstr()
             ________________________________________________________________________
@@ -1269,33 +1256,78 @@ class SelectElement:
         res = srcstring
 
         # beware : order matters !
-        res = res.replace("%ht", hex(int(self.time))[2:])
+        res = res.replace("%ht", hex(int(data['time']))[2:])
 
-        res = res.replace("%h", self.hashid)
+        res = res.replace("%h", data['hashid'])
 
-        res = res.replace("%ff", remove_illegal_characters(self.filename_no_extens))
-        res = res.replace("%f", self.filename_no_extens)
+        res = res.replace("%ff", remove_illegal_characters(data['filename_no_extens']))
+        res = res.replace("%f", data['filename_no_extens'])
 
-        res = res.replace("%pp", remove_illegal_characters(self.path))
-        res = res.replace("%p", self.path)
+        res = res.replace("%pp", remove_illegal_characters(data['path']))
+        res = res.replace("%p", data['path'])
 
-        res = res.replace("%ee", remove_illegal_characters(self.extension))
-        res = res.replace("%e", self.extension)
+        res = res.replace("%ee", remove_illegal_characters(data['extension']))
+        res = res.replace("%e", data['extension'])
 
-        res = res.replace("%s", str(self.size))
+        res = res.replace("%s", str(data['size']))
 
-        res = res.replace("%dd", remove_illegal_characters(self.date))
+        res = res.replace("%dd", remove_illegal_characters(data['date']))
 
-        res = res.replace("%t", str(int(self.time)))
+        res = res.replace("%t", str(int(data['time'])))
 
-        res = res.replace("%i", str(self.database_index))
+        res = res.replace("%i", str(data['database_index']))
 
         return res
 
     #///////////////////////////////////////////////////////////////////////////////
+    @classmethod
+    def from_db_row(cls, db_row):
+        data['fullname'] = db_row['sourcename']
+        data['size'] = db_row['size']
+        data['database_index'] = db_row['rowid']
+
+        data['time'] = os.stat(fullname).st_mtime
+        # TODO: storing th etimestampl may be more practical
+        data['date'] = datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
+
+        data['partialhashid'] = db_row['partialhashid']
+        data['hashid'] = db_row['hashid']
+
+        data['targetname'] = db_row['name']
+        data['targettags'] = db_row['tagsstr']
 
 
-################################################################################
+        data['dirpath'], filename = os.path.split(data['fullname'])
+        data['filename_no_extens'], data['extension'] = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
+
+        return super().__new__(**data)
+
+    def __eq__(self, other):
+        if self.hashid != other.hashid:
+            return False
+        elif self.partialhashid != other.partialhashid:
+            return False
+        else:
+            # We have to do a bit-to-bit comparison
+            return filecmp.cmp(element.filename, TARGET_DB[hashid][2], shallow=False)
+
+    def __hash__(self):
+        return hash(hashid)
+
+    #///////////////////////////////////////////////////////////////////////////////
+    def __set__(self, value):
+        """
+        setattr(self, value)
+        __________________________________________________________________________
+
+        The object should be immutable, so that its hash doesn't change. So this
+        function should prevent any attribute change.
+        However, this is not a very strong protection, but it should prevent most
+        of changes
+        """
+        raise TypeError("Can't set attributes of 'SelectElement' type")
+
+
 class KatalError(BaseException):
     """
         KatalError class
@@ -1330,7 +1362,7 @@ def action__add():
     db_connection = sqlite3.connect(get_database_fullname())
     db_cursor = db_connection.cursor()
 
-    if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES*CST__FREESPACE_MARGIN:
+    if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
         LOGGER.warning("    ! Not enough space on disk. Stopping the program.")
         # returned value : -1 = error
         return -1
@@ -2909,7 +2941,6 @@ def fill_select2(debug_datatime=None):
                         LOGGER.info("       size=%s; date=%s",
                                     element.size, element.date)
 
-
                     else:
                         # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
                         # tobeadded is False : let's discard <filename> :
@@ -2919,6 +2950,8 @@ def fill_select2(debug_datatime=None):
                             LOGGER.info("    - %s (similar hashid in the database) "
                                         " discarded \"%s\"", prefix, fullname)
 
+
+    SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT.items())
 
     return fill_select__checks(number_of_discarded_files=number_of_discarded_files,
                                prefix=prefix,
@@ -3535,9 +3568,7 @@ def read_target_db():
     db_cursor = db_connection.cursor()
 
     for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-        TARGET_DB[db_record["hashid"]] = (db_record["partialhashid"],
-                                          db_record["size"],
-                                          db_record["sourcename"])
+        TARGET_DB[db_record["hashid"]] = SelectElement.from_db_row(db_record)
 
     db_connection.close()
 
