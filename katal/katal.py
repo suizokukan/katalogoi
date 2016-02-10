@@ -408,19 +408,19 @@ class Config(configparser.ConfigParser):
     def read_all_config_files(self):
         config_files = self.possible_paths_to_cfg()
 
-        self.cfg_files = self.read(config_files)
+        cfg_files = self.read(config_files)
 
         if self.configfile:
             try:
                 with open(self.configfile) as f:
                     self.read_file(f)
-                    self.cfg_files.append(self.configfile)
+                    cfg_files.append(self.configfile)
             except FileNotFoundError:
                 print('  ! The config file "%s" (path : "%s") '
                     " doesn't exist. " % self.configfile, normpath(self.configfile))
                 raise ConfigError
 
-        if not self.cfg_files:
+        if not cfg_files:
             print('  ! No config file has been found, ')
             print("    Use the -dlcfg/--downloaddefaultcfg option "
                   "to download a default config file.")
@@ -618,7 +618,8 @@ class Config(configparser.ConfigParser):
         return self
 
     #///////////////////////////////////////////////////////////////////////////////
-    def possible_paths_to_cfg(self):
+    @staticmethod
+    def possible_paths_to_cfg():
         """
             possible_paths_to_cfg()
             ________________________________________________________________________
@@ -682,17 +683,17 @@ class Config(configparser.ConfigParser):
         try:
             USE_LOGFILE = parser["log file"].getboolean("use log file")
             # just to check the existence of the following values in the configuration file :
-            parser["log file"]["maximal size"]
-            parser["log file"]["name"]
-            parser["target"]["name of the target files"]
-            parser["target"]["mode"]
-            parser["source"]["eval"]
-            parser["display"]["target filename.max length on console"]
-            parser["display"]["hashid.max length on console"]
-            parser["display"]["tag.max length on console"]
-            parser["display"]["source filename.max length on console"]
-            parser["source"]["path"]
-        except KeyError as exception:
+            assert "maximal size" in parser["log file"]
+            assert "name" in parser["log file"]
+            assert "name of the target files" in parser["target"]
+            assert "mode"in parser["target"]
+            assert "eval"in parser["source"]
+            assert "path"in parser["source"]
+            assert "target filename.max length on console" in parser["display"]
+            assert "hashid.max length on console" in parser["display"]
+            assert "tag.max length on console" in parser["display"]
+            assert "source filename.max length on console" in parser["display"]
+        except (KeyError, AssertionError) as exception:
             print("  ! An error occured while reading config files.")
             print('  ! Your configuration file lacks a specific value : "%s".' % exception)
             print("  ... you should download a new default config file : "
@@ -1126,37 +1127,37 @@ class SelectElement(SelectTuple):
 
 
     """
-    def __new__(self, fullname, targetpath=None):
+    def __new__(cls, fullname, targetpath=None):
         fullname = normpath(fullname)
 
         data = {}
         data['srcname'] = fullname
         filename = os.path.basename(fullname)
-        data['filename_no_extens'], data['extension'] = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
         data['size'] = os.stat(fullname).st_size
         data['time'] = os.stat(fullname).st_mtime
 
         data['database_index'] = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
 
-        data['partialhashid'] = hashfile64(filename=self.fullname,
-                                   stop_after=CST__PARTIALHASHID_BYTESNBR),
-        data['hashid'] = hashfile64(filename=self.fullname)
+        data['partialhashid'] = hashfile64(filename=fullname,
+                                           stop_after=CST__PARTIALHASHID_BYTESNBR),
+        data['hashid'] = hashfile64(filename=fullname)
 
         if targetpath is None:
             targetpath = ARGS.targetpath
         data['targetname'] = os.path.join(normpath(targetpath),
-                                          self.create_target_name(data))
-        data['targettags'] = self.create_target_tags(data)
+                                          cls.create_target_name(data))
+        data['targettags'] = cls.create_target_tags(data)
 
         return super().__new__(**data)
 
     @classmethod
     def from_db_row(cls, db_row):
+        data = {}
         data['srcname'] = db_row['sourcename']
         data['size'] = db_row['size']
         data['database_index'] = db_row['rowid']
 
-        data['time'] = os.stat(fullname).st_mtime
+        data['time'] = db_row['time']
 
         data['partialhashid'] = db_row['partialhashid']
         data['hashid'] = db_row['hashid']
@@ -1166,8 +1167,7 @@ class SelectElement(SelectTuple):
 
         return super().__new__(**data)
 
-    @staticmethod
-    def create_target_name(data):
+    def create_target_name(self, data):
         """
             create_target_name()
             ________________________________________________________________________
@@ -1209,8 +1209,7 @@ class SelectElement(SelectTuple):
         return self.add_keywords_in_targetstr(CONFIG["target"]["name of the target files"], data)
 
     #/////////////////////////////////////////////////////////////////////////////////////////
-    @staticmethod
-    def create_target_tags(data):
+    def create_target_tags(self, data):
         """
             create_target_tags()
             ________________________________________________________________________
@@ -1289,19 +1288,20 @@ class SelectElement(SelectTuple):
         """
         res = srcstring
 
+        filename_no_extens, extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
         # beware : order matters !
         res = res.replace("%ht", hex(int(data['time']))[2:])
 
         res = res.replace("%h", data['hashid'])
 
-        res = res.replace("%ff", remove_illegal_characters(data['filename_no_extens']))
-        res = res.replace("%f", data['filename_no_extens'])
+        res = res.replace("%ff", remove_illegal_characters(filename_no_extens))
+        res = res.replace("%f", filename_no_extens)
 
         res = res.replace("%pp", remove_illegal_characters(data['path']))
         res = res.replace("%p", data['path'])
 
-        res = res.replace("%ee", remove_illegal_characters(data['extension']))
-        res = res.replace("%e", data['extension'])
+        res = res.replace("%ee", remove_illegal_characters(extension))
+        res = res.replace("%e", extension)
 
         res = res.replace("%s", str(data['size']))
 
@@ -1315,6 +1315,10 @@ class SelectElement(SelectTuple):
         return res
 
     #///////////////////////////////////////////////////////////////////////////////
+
+    @property
+    def date(self):
+        return datetime.fromtimestamp(self.time).strptime(CST__DTIME_FORMAT)
     def __eq__(self, other):
         if self.hashid != other.hashid:
             return False
@@ -1322,23 +1326,10 @@ class SelectElement(SelectTuple):
             return False
         else:
             # We have to do a bit-to-bit comparison
-            return filecmp.cmp(element.filename, other.fullname, shallow=False)
+            return filecmp.cmp(self.filename, other.fullname, shallow=False)
 
     def __hash__(self):
-        return hash(hashid)
-
-    #///////////////////////////////////////////////////////////////////////////////
-    def __set__(self, value):
-        """
-        setattr(self, value)
-        __________________________________________________________________________
-
-        The object should be immutable, so that its hash doesn't change. So this
-        function should prevent any attribute change.
-        However, this is not a very strong protection, but it should prevent most
-        of changes
-        """
-        raise TypeError("Can't set attributes of 'SelectElement' type")
+        return hash(self.hashid)
 
 
 class KatalError(BaseException):
@@ -1483,7 +1474,7 @@ def action__cleandbrm():
         for element in files_to_be_rmved_from_the_db:
             if not ARGS.off:
                 LOGGER.info("    o removing \"%s\" record "
-                            "from the database", hashid)
+                            "from the database", element.targetname)
                 db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (element.targetname,))
                 db_connection.commit()
 
@@ -1566,7 +1557,7 @@ def action__findtag(tag):
         return
 
     res = []
-    for element in read_target_db2:
+    for element in read_target_db2():
         if tag in element.targettags:
 
             res.append(element)
@@ -1714,7 +1705,7 @@ def action__rebase(newtargetpath):
             os.remove(new_db)
 
     # let's compute the new names :
-    files, anomalies_nbr = action__rebase__files(dest_params, newtargetpath)
+    files, anomalies_nbr = action__rebase__files(newtargetpath)
 
     go_on = True
     if anomalies_nbr:
@@ -1730,7 +1721,7 @@ def action__rebase(newtargetpath):
         action__rebase__write(new_db, files)
 
 #///////////////////////////////////////////////////////////////////////////////
-def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
+def action__rebase__files(newtargetpath):
     """
         action__rebase__files()
         ________________________________________________________________________
@@ -1743,8 +1734,6 @@ def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
 
         PARAMETER :
                 o olddb_cursor         : cursor to the source database
-                o dest_params          : an object returned by read_parameters_from_cfgfile(),
-                                         like CFG_PARAMETERS
                 o newtargetpath        : (str) path to the new target directory.
 
         RETURNED VALUE :
@@ -1763,27 +1752,27 @@ def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
     filenames = set()   # to be used to avoid duplicates.
 
     anomalies_nbr = 0
-    for index, old_element in enumerate(read_target_db2()):
-        fullname = element.targetname
+    for old_element in read_target_db2():
+        fullname = old_element.targetname
 
-        new_element = SelectElement(fullname, target=newtargetpath)
+        new_element = SelectElement(fullname, targetpath=newtargetpath)
         new_name = new_element.targetname
 
         LOGGER.info("      o %s : %s would be copied as %s",
-                    element.hashid, element.targetname, new_name)
+                    old_element.hashid, fullname, new_name)
 
         if new_name in filenames:
             LOGGER.warning("      ! anomaly : ancient file %s should be renamed as %s "
                            "but this name would have been already created "
                            "in the new target directory ! ",
-                           new_name, fullname)
+                           fullname, new_name)
             LOGGER.warning("        Two different files from the ancient target directory "
                            "can't bear the same name in the new target directory !")
             anomalies_nbr += 1
         elif os.path.exists(new_name):
             LOGGER.warning("      ! anomaly : ancient file %s should be renamed as %s "
                            "but this name already exists in new target directory !",
-                           new_name, fullname)
+                           fullname, new_name,)
             anomalies_nbr += 1
         else:
             files.add(new_element)
@@ -1792,12 +1781,12 @@ def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
     return files, anomalies_nbr
 
 #///////////////////////////////////////////////////////////////////////////////
-def action__rebase__write(new_db, _files):
+def action__rebase__write(new_db, files):
     """
         action__rebase__write()
         ________________________________________________________________________
 
-        Write the files described by "_files" in the new target directory.
+        Write the files described by "files" in the new target directory.
         ________________________________________________________________________
 
         PARAMETER :
@@ -1815,10 +1804,10 @@ def action__rebase__write(new_db, _files):
         if not ARGS.off:
             newdb_cursor.execute(CST__SQL__CREATE_DB)
 
-        for index, futurefile in enumerate(files):
+        for index, futurefile in enumerate(files, 1):
 
             strdate = datetime.utcfromtimestamp(futurefile.time).strftime(CST__DTIME_FORMAT)
-            LOGGER.info("    o (%s/%s) adding a file in the new database", index+1, len(_files))
+            LOGGER.info("    o (%s/%s) adding a file in the new database", index, len(files))
             LOGGER.info("      o hashid      : %s", futurefile.hashid)
             LOGGER.info("      o source name : \"%s\"", futurefile.srcname)
             LOGGER.info("      o desti. name : \"%s\"", futurefile.targetname)
@@ -1827,7 +1816,7 @@ def action__rebase__write(new_db, _files):
             LOGGER.info("      o tags        : \"%s\"", futurefile.targettags)
 
             if not ARGS.off:
-                newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', file_to_be_added[:7])
+                newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', futurefile[:7])
 
         newdb_connection.commit()
 
@@ -1872,10 +1861,10 @@ def action__reset():
         if answer not in ("y", "yes"):
             return
 
-    files_to_be_removed = [element.name for element in read_target_db2()]  # a list of fullname
+    files_to_be_removed = [element.targetname for element in read_target_db2()]  # a list of fullname
 
-    db_cursor = db_connection.cursor()
     db_connection = sqlite3.connect(get_database_fullname())
+    db_cursor = db_connection.cursor()
 
     for name in files_to_be_removed:
         LOGGER.info("   o removing %s from the database and from the target path", name)
@@ -1883,7 +1872,8 @@ def action__reset():
             # let's remove the file from the target directory :
             shutil.move(name,
                         os.path.join(normpath(ARGS.targetpath),
-                                     CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, os.path.basename(name)))
+                                     CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR,
+                                     os.path.basename(name)))
             # let's remove the file from the database :
             db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
 
@@ -1925,7 +1915,8 @@ def action__rmnotags():
                     # let's remove the file from the target directory :
                     shutil.move(name,
                                 os.path.join(normpath(ARGS.targetpath),
-                                             CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, os.path.basename(name)))
+                                             CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR,
+                                             os.path.basename(name)))
 
                     # let's remove the file from the database :
                     db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
@@ -1972,7 +1963,7 @@ def action__select():
     LOGGER.info("  o file list :")
 
     # let's initialize SELECT and SELECT_SIZE_IN_BYTES :
-    number_of_discarded_files = fill_select()
+    number_of_discarded_files = fill_select2()
 
     LOGGER.info("    o size of the selected file(s) : %s", size_as_str(SELECT_SIZE_IN_BYTES))
 
@@ -1990,14 +1981,13 @@ def action__select():
     if CFG_PARAMETERS["target"]["mode"] != "nocopy":
         available_space = get_disk_free_space(ARGS.targetpath)
         if available_space > SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
-            size_ok = "ok"
             LOGGER.info("    o required space : %s; "
                         "available space on disk : %s (ok)",
                         size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
         else:
             LOGGER.error("    o required space : %s; "
-                        "available space on disk : %s (!!! problem !!!)",
-                        size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
+                         "available space on disk : %s (!!! problem !!!)",
+                         size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
 
     # if there's no --add option, let's give some examples of the target names :
     if not ARGS.add and CFG_PARAMETERS["target"]["mode"] != "nocopy":
@@ -2074,7 +2064,7 @@ def action__target_kill(filename):
             # let's remove filename from the target directory :
             shutil.move(os.path.join(normpath(ARGS.targetpath), filename),
                         os.path.join(normpath(ARGS.targetpath),
-                                        CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, filename))
+                                     CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, filename))
 
             # let's remove filename from the database :
             db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (element.targetname,))
@@ -2104,30 +2094,16 @@ def action__whatabout(src):
     """
     #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
     def show_infos_about_a_srcfile(srcfile_name):
-        """
-                Display the expected informations about a file named srcfile_name .
-        """
+        """Display the expected informations about a file named srcfile_name."""
+
         LOGGER.info("  = what about the \"%s\" file ? (path : \"%s\")", src, srcfile_name)
-        size = os.stat(srcfile_name).st_size
-        LOGGER.info("    = size : %s", size_as_str(size))
-
-        sourcedate = datetime.utcfromtimestamp(os.path.getmtime(srcfile_name))
-        sourcedate = sourcedate.replace(second=0, microsecond=0)
-        sourcedate2 = sourcedate
-        sourcedate2 -= datetime(1970, 1, 1)
-        sourcedate2 = sourcedate2.total_seconds()
-        LOGGER.info("    = mtime : %s (epoch value : %s)", sourcedate, sourcedate2)
-
-        srchash = hashfile64(srcfile_name)
-        LOGGER.info("    = hash : %s", srchash)
+        element = SelectElement(srcfile_name)
+        LOGGER.info("    = size : %s", size_as_str(element.size))
+        LOGGER.info("    = mtime : %s (epoch value : %s)", element.date, element.time)
+        LOGGER.info("    = hash : %s", element.hashid)
 
         # is the hash in the database ?
-        already_present_in_db = False
-        for hashid in TARGET_DB:
-            if hashid == srchash:
-                already_present_in_db = True
-                break
-        if already_present_in_db:
+        if element in TARGET_DB:
             LOGGER.info("    = the file's content is equal to a file "
                         "ALREADY present in the database.")
         else:
@@ -2153,29 +2129,28 @@ def action__whatabout(src):
 
     else:
         # informations about the source file :
-        if normpath(ARGS.targetpath) in normpath(src):
+        if normpath(ARGS.targetpath) not in normsrc:
+            # normal case : the file is outside the target directory :
+            show_infos_about_a_srcfile(normsrc)
+
+        else:
             # special case : the file is inside the target directory :
             LOGGER.info("  = what about the \"%s\" file ? (path : \"%s\")", src, normsrc)
             LOGGER.info("    This file is inside the target directory.")
-            srchash = hashfile64(normsrc)
-            LOGGER.info("    = hash : %s", srchash)
             LOGGER.info("    Informations extracted from the database :")
             # informations from the database :
             db_connection = sqlite3.connect(get_database_fullname())
             db_connection.row_factory = sqlite3.Row
             db_cursor = db_connection.cursor()
-            for db_record in db_cursor.execute("SELECT * FROM dbfiles WHERE hashid=?", (srchash,)):
+            for db_record in db_cursor.execute("SELECT * FROM dbfiles WHERE targetname=?", (src,)):
+                LOGGER.info("    = hash : %s", db_record["hashid"])
                 LOGGER.info("    = partial hashid : %s", db_record["partialhashid"])
-                LOGGER.info("    = name : %s", db_record["name"])
+                LOGGER.info("    = name : %s", db_record["targetname"])
                 LOGGER.info("    = size : %s", db_record["size"])
                 LOGGER.info("    = source name : %s", db_record["sourcename"])
                 LOGGER.info("    = source date : %s", db_record["sourcedate"])
                 LOGGER.info("    = tags' string : %s", db_record["tagsstr"])
             db_connection.close()
-
-        else:
-            # normal case : the file is outside the target directory :
-            show_infos_about_a_srcfile(normpath(src))
 
     return True
 
@@ -2403,7 +2378,7 @@ def eval_filters(filters):
                                                                               exception))
 
 #///////////////////////////////////////////////////////////////////////////////
-def fill_select2(debug_datatime=None):
+def fill_select2():
     """
         fill_select()
         ________________________________________________________________________
@@ -2491,7 +2466,7 @@ def fill_select2(debug_datatime=None):
                         LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
                                     prefix, fullname, len(SELECT))
                         LOGGER.info("       size=%s; date=%s",
-                                    element.size, element.date) #TODO remove date
+                                    element.size, element.date)
 
                     else:
                         # tobeadded is False : let's discard <filename> :
@@ -2614,7 +2589,7 @@ def get_disk_free_space(path):
                 the expected int(eger)
     """
     # Normally, whutil should be plateform independant.
-    return shutil.disk_usage(normath(path)).free
+    return shutil.disk_usage(normpath(path)).free
 
 #///////////////////////////////////////////////////////////////////////////////
 def get_filename_and_extension(path):
@@ -3025,8 +3000,8 @@ def modify_the_tag_of_some_files(tag, dest, mode):
 
                 elif mode == "append":
                     sqlorder = ('UPDATE dbfiles SET tagsstr=? WHERE targetname=?')
-                    db_cursor.executescript(sqlorder, (element.targettags + CST__TAG_SEPARATOR + tag,
-                                                       element.targetname))
+                    db_cursor.execute(sqlorder, (element.targettags + CST__TAG_SEPARATOR + tag,
+                                                 element.targetname))
 
                 else:
                     raise KatalError("mode argument \"{0}\" isn't known".format(mode))
@@ -3102,7 +3077,6 @@ def read_target_db():
 
         no PARAMETER, no RETURNED VALUE
     """
-    global TARGET_DB
     if not os.path.exists(normpath(get_database_fullname())):
         create_empty_db(normpath(get_database_fullname()))
 
