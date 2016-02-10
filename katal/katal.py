@@ -44,7 +44,7 @@ import ctypes
 import hashlib
 from datetime import datetime
 import filecmp
-import fnmatch
+from fnmatch import fnmatch
 import itertools
 import logging
 from logging.handlers import RotatingFileHandler
@@ -95,9 +95,9 @@ CONFIG = None # centralize all config (command line + configuration file)
 INFOS_ABOUT_SRC_PATH = (None, None, None)  # initialized by show_infos_about_source_path()
                                            # ((int)total_size, (int)files_number, (dict)extensions)
 
-TARGET_DB = dict()      # see documentation:database; initialized by read_target_db()
+TARGET_DB = set()      # see documentation:database; initialized by read_target_db()
 
-SELECT = {}               # see documentation:selection; initialized by action__select()
+SELECT = set()               # see documentation:selection; initialized by action__select()
 SELECT_SIZE_IN_BYTES = 0  # initialized by action__select()
 FILTER = None             # see documentation:selection; initialized by read_filters()
 
@@ -219,7 +219,9 @@ CST__SQL__CREATE_DB = ('CREATE TABLE dbfiles ('
                        'partialhashid TEXT, '
                        'size INTEGER, '
                        'targetname TEXT UNIQUE, '
-                       'sourcename TEXT, sourcedate INTEGER, tagsstr TEXT)')
+                       'sourcename TEXT, '
+                       'sourcetime INTEGER, '
+                       'tagsstr TEXT)')
 
 CST__TAG_SEPARATOR = ";"  # symbol used in the database between two tags.
 
@@ -1100,40 +1102,72 @@ class Filter:
 #///////////////////////////////////////////////////////////////////////////////
 
 
-SelectTuple = namedtuple('SELECTELEMENT', ["fullname",
-                                             "partialhashid",
-                                             "dirpath",
-                                             "filename_no_extens",
-                                             "extension",
-                                             "size",
-                                             "date",
-                                             "targetname",
-                                             "targettags",])
+# The order matter !
+# It should be exactly the same than the order of column in database
+SelectTuple = namedtuple('SELECTELEMENT', ["hashid",
+                                           "partialhashid",
+                                           "size",
+                                           "targetname",
+                                           "srcname",
+                                           "time",
+                                           "targettags",
+                                           "database_index"])
 class SelectElement(SelectTuple):
-    def __new__(self, fullname):
+    """
+    ATTRIBUTES
+        o hashid        : (str) hashid of the file
+        o partialhashid : (str) partial hashid of the file
+        o size          : (int) size in bytes of the file
+        o targetname    : (str) full target name of the file, ready to be used by os.path
+        o srcname       : (str) full source name of the file, ready to be used by os.path
+        o time          : (int) timestamp of last modification of the file
+        o targettags    : (str) list of tags
+        o database_index: (int) number of the element in db
+
+
+    """
+    def __new__(self, fullname, targetpath=None):
         fullname = normpath(fullname)
 
         data = {}
-        data['fullname'] = fullname
-        data['dirpath'], filename = os.path.split(fullname)
+        data['srcname'] = fullname
+        filename = os.path.basename(fullname)
         data['filename_no_extens'], data['extension'] = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
         data['size'] = os.stat(fullname).st_size
         data['time'] = os.stat(fullname).st_mtime
-        # TODO: storing th etimestampl may be more practical
-        data['date'] = datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
+
         data['database_index'] = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
 
         data['partialhashid'] = hashfile64(filename=self.fullname,
                                    stop_after=CST__PARTIALHASHID_BYTESNBR),
         data['hashid'] = hashfile64(filename=self.fullname)
 
-        data['targetname'] = self.create_target_name(data)
+        if targetpath is None:
+            targetpath = ARGS.targetpath
+        data['targetname'] = os.path.join(normpath(targetpath),
+                                          self.create_target_name(data))
         data['targettags'] = self.create_target_tags(data)
 
         return super().__new__(**data)
 
+    @classmethod
+    def from_db_row(cls, db_row):
+        data['srcname'] = db_row['sourcename']
+        data['size'] = db_row['size']
+        data['database_index'] = db_row['rowid']
+
+        data['time'] = os.stat(fullname).st_mtime
+
+        data['partialhashid'] = db_row['partialhashid']
+        data['hashid'] = db_row['hashid']
+
+        data['targetname'] = db_row['name']
+        data['targettags'] = db_row['tagsstr']
+
+        return super().__new__(**data)
+
     @staticmethod
-    def create_target_name(self, data):
+    def create_target_name(data):
         """
             create_target_name()
             ________________________________________________________________________
@@ -1176,7 +1210,7 @@ class SelectElement(SelectTuple):
 
     #/////////////////////////////////////////////////////////////////////////////////////////
     @staticmethod
-    def create_target_tags(self, data):
+    def create_target_tags(data):
         """
             create_target_tags()
             ________________________________________________________________________
@@ -1271,7 +1305,8 @@ class SelectElement(SelectTuple):
 
         res = res.replace("%s", str(data['size']))
 
-        res = res.replace("%dd", remove_illegal_characters(data['date']))
+        res = res.replace("%dd", remove_illegal_characters(
+            datetime.fromtimestamp(data['time']).strftime(CST__DTIME_FORMAT)))
 
         res = res.replace("%t", str(int(data['time'])))
 
@@ -1280,28 +1315,6 @@ class SelectElement(SelectTuple):
         return res
 
     #///////////////////////////////////////////////////////////////////////////////
-    @classmethod
-    def from_db_row(cls, db_row):
-        data['fullname'] = db_row['sourcename']
-        data['size'] = db_row['size']
-        data['database_index'] = db_row['rowid']
-
-        data['time'] = os.stat(fullname).st_mtime
-        # TODO: storing th etimestampl may be more practical
-        data['date'] = datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
-
-        data['partialhashid'] = db_row['partialhashid']
-        data['hashid'] = db_row['hashid']
-
-        data['targetname'] = db_row['name']
-        data['targettags'] = db_row['tagsstr']
-
-
-        data['dirpath'], filename = os.path.split(data['fullname'])
-        data['filename_no_extens'], data['extension'] = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
-
-        return super().__new__(**data)
-
     def __eq__(self, other):
         if self.hashid != other.hashid:
             return False
@@ -1309,7 +1322,7 @@ class SelectElement(SelectTuple):
             return False
         else:
             # We have to do a bit-to-bit comparison
-            return filecmp.cmp(element.filename, TARGET_DB[hashid][2], shallow=False)
+            return filecmp.cmp(element.filename, other.fullname, shallow=False)
 
     def __hash__(self):
         return hash(hashid)
@@ -1369,47 +1382,32 @@ def action__add():
 
     files_to_be_added = []
     len_select = len(SELECT)
-    for index, hashid in enumerate(SELECT):
+    for index, element in enumerate(SELECT, 1):
 
-        complete_source_filename = SELECT[hashid].fullname
-        target_name = os.path.join(normpath(ARGS.targetpath), SELECT[hashid].targetname)
-
-        sourcedate = datetime.utcfromtimestamp(os.path.getmtime(complete_source_filename))
-        sourcedate = sourcedate.replace(second=0, microsecond=0)
-
-        # converting the datetime object in epoch value (=the number of seconds from 1970-01-01 :
-        sourcedate -= datetime(1970, 1, 1)
-        sourcedate = sourcedate.total_seconds()
+        complete_source_filename = element.srcname
+        target_name = element.targetname
 
         if not ARGS.off:
             if CFG_PARAMETERS["target"]["mode"] == "nocopy":
                 # nothing to do
                 LOGGER.info("    ... (%s/%s) due to the nocopy mode argument, "
                             "\"%s\" will be simply added "
-                            "in the target database.", index+1, len_select,
+                            "in the target database.", index, len_select,
                             complete_source_filename)
 
             elif CFG_PARAMETERS["target"]["mode"] == "copy":
                 # copying the file :
                 LOGGER.info("    ... (%s/%s) about to " "copy \"%s\" to \"%s\" .",
-                            index+1, len_select, complete_source_filename, target_name)
-                shutil.copyfile(complete_source_filename, target_name)
-                os.utime(target_name, (sourcedate, sourcedate))
+                            index, len_select, complete_source_filename, target_name)
+                shutil.copy2(complete_source_filename, target_name)
 
             elif CFG_PARAMETERS["target"]["mode"] == "move":
                 # moving the file :
                 LOGGER.info("    ... (%s/%s) about to " "move \"%s\" to \"%s\" .",
-                            index+1, len_select, complete_source_filename, target_name)
+                            index, len_select, complete_source_filename, target_name)
                 shutil.move(complete_source_filename, target_name)
-                os.utime(target_name, (sourcedate, sourcedate))
 
-        files_to_be_added.append((hashid,
-                                  SELECT[hashid].partialhashid,
-                                  SELECT[hashid].size,
-                                  SELECT[hashid].targetname,
-                                  complete_source_filename,
-                                  sourcedate,
-                                  SELECT[hashid].targettags))
+        files_to_be_added.append(element[:7])
 
     LOGGER.info("    = all files have been copied, let's update the database...")
 
@@ -1423,7 +1421,7 @@ def action__add():
         for file_to_be_added in files_to_be_added:
             LOGGER.error("     ! hashid=%s; partialhashid=%s; size=%s; name=%s; sourcename=%s; "
                          "sourcedate=%s; tagsstr=%s", *file_to_be_added)
-        raise KatalError("An error occured while writing the database : "+str(exception))
+        raise KatalError("An error occured while writing the database : " + str(exception))
 
     db_connection.commit()
     db_connection.close()
@@ -1468,29 +1466,28 @@ def action__cleandbrm():
         LOGGER.warning("    ! no database found.")
         return
 
-    db_connection = sqlite3.connect(get_database_fullname())
-    db_connection.row_factory = sqlite3.Row
-    db_cursor = db_connection.cursor()
-
-    files_to_be_rmved_from_the_db = []  # hashid of the files
-    for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-        if not os.path.exists(os.path.join(normpath(ARGS.targetpath), db_record["name"])):
-            files_to_be_rmved_from_the_db.append(db_record["hashid"])
+    files_to_be_rmved_from_the_db = []
+    for element in read_target_db2():
+        if not os.path.exists(element.srcname):
+            files_to_be_rmved_from_the_db.append(element)
             LOGGER.info("    o about to remove \"%s\" "
-                        "from the database", os.path.join(normpath(ARGS.targetpath),
-                                                          db_record["name"]))
+                        "from the database", element.srcname)
 
-    if len(files_to_be_rmved_from_the_db) == 0:
+    if not files_to_be_rmved_from_the_db:
         LOGGER.info("    * no file to be removed : the database is ok.")
     else:
-        for hashid in files_to_be_rmved_from_the_db:
+        db_connection = sqlite3.connect(get_database_fullname())
+        db_connection.row_factory = sqlite3.Row
+        db_cursor = db_connection.cursor()
+
+        for element in files_to_be_rmved_from_the_db:
             if not ARGS.off:
                 LOGGER.info("    o removing \"%s\" record "
                             "from the database", hashid)
-                db_cursor.execute("DELETE FROM dbfiles WHERE hashid=?", (hashid,))
+                db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (element.targetname,))
                 db_connection.commit()
 
-    db_connection.close()
+        db_connection.close()
     if not ARGS.off:
         LOGGER.info("    o ... done : removed %s "
                     "file(s) from the database", len(files_to_be_rmved_from_the_db))
@@ -1568,17 +1565,13 @@ def action__findtag(tag):
         LOGGER.warning("    ! no database found.")
         return
 
-    db_connection = sqlite3.connect(get_database_fullname())
-    db_connection.row_factory = sqlite3.Row
-    db_cursor = db_connection.cursor()
-
     res = []
-    for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-        if tag in db_record["tagsstr"]:
+    for element in read_target_db2:
+        if tag in element.targettags:
 
-            res.append(db_record["name"])
+            res.append(element)
             LOGGER.info("    o \"%s\" : \"%s\"",
-                        db_record["name"], tagsstr_repr(db_record["tagsstr"]))
+                        element.targetname, tagsstr_repr(element.targettags))
 
     len_res = len(res)
     if len_res == 0:
@@ -1587,9 +1580,6 @@ def action__findtag(tag):
         LOGGER.info("    o one file matches the tag \"%s\" .", tag)
     else:
         LOGGER.info("    o %s files match the tag \"%s\" .", len_res, tag)
-
-    db_connection.commit()
-    db_connection.close()
 
     # --copyto argument :
     if ARGS.copyto:
@@ -1602,13 +1592,14 @@ def action__findtag(tag):
             if not ARGS.off:
                 os.mkdir(normpath(ARGS.copyto))
 
-        for i, filename in enumerate(res):
+        for i, element in enumerate(res, 1):
+            filename = os.path.basename(element.targetname)
             src = os.path.join(normpath(ARGS.targetpath), filename)
             dest = os.path.join(normpath(ARGS.copyto), filename)
             LOGGER.info("    o (%s/%s) copying \"%s\" as \"%s\"...",
-                        i+1, len_res, src, dest)
+                        i, len_res, src, dest)
             if not ARGS.off:
-                shutil.copy(src, dest)
+                shutil.copy2(src, dest)
 
 #///////////////////////////////////////////////////////////////////////////////
 def action__infos():
@@ -1642,19 +1633,21 @@ def action__new(targetname):
     LOGGER.warning("  = about to create a new target directory "
                    "named \"%s\" (path : \"%s\")", targetname, normpath(targetname))
 
-    if os.path.exists(normpath(targetname)):
+    targetname = normpath(targetname)
+
+    if os.path.exists(targetname):
         LOGGER.warning("  ! can't go further : the directory already exists.")
         return
 
     if not ARGS.off:
         LOGGER.warning("  ... creating the target directory with its sub-directories...")
-        os.mkdir(normpath(targetname))
-        os.mkdir(os.path.join(normpath(targetname), CST__KATALSYS_SUBDIR))
-        os.mkdir(os.path.join(normpath(targetname), CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR))
-        os.mkdir(os.path.join(normpath(targetname), CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))
-        os.mkdir(os.path.join(normpath(targetname), CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR))
+        os.mkdir(targetname)
+        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR))
+        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR))
+        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))
+        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR))
 
-        create_empty_db(os.path.join(normpath(targetname),
+        create_empty_db(os.path.join(targetname,
                                      CST__KATALSYS_SUBDIR,
                                      CST__DATABASE_NAME))
 
@@ -1664,10 +1657,9 @@ def action__new(targetname):
                    "into the expected directory ? (y/N) "))
 
         if answer in ("y", "yes"):
-            res = action__downloadefaultcfg(targetname=os.path.join(normpath(targetname),
-                                                                    CST__KATALSYS_SUBDIR,
-                                                                    CST__DEFAULT_CONFIGFILE_NAME),
-                                            location="local")
+            res = action__downloadefaultcfg(
+                os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__DEFAULT_CONFIGFILE_NAME),
+                "local")
             if not res:
                 LOGGER.warning("  ! A problem occured : "
                                "the creation of the target directory has been aborted.")
@@ -1688,6 +1680,7 @@ def action__rebase(newtargetpath):
 
         no RETURNED VALUE
     """
+    newtargetpath = normpath(newtargetpath)
     source_path = CFG_PARAMETERS["source"]["path"]
 
     LOGGER.info("  = copying the current target directory into a new one.")
@@ -1701,7 +1694,8 @@ def action__rebase(newtargetpath):
     LOGGER.info("    o trying to read dest config file %s "
                 "(path : \"%s\") .", to_configfile, normpath(to_configfile))
 
-    dest_params = read_parameters_from_cfgfile(normpath(to_configfile))
+    dest_params = Config()
+    dest_params.read_config([], to_configfile)
 
     if dest_params is None:
         LOGGER.warning("    ! can't read the dest config file !")
@@ -1713,21 +1707,17 @@ def action__rebase(newtargetpath):
     LOGGER.info("    o tags to be added : %s",
                 dest_params["target"]["tags"])
 
-    new_db = os.path.join(normpath(newtargetpath), CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
+    new_db = os.path.join(newtargetpath, CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
     if not ARGS.off:
         if os.path.exists(new_db):
             # let's delete the previous new database :
             os.remove(new_db)
 
     # let's compute the new names :
-    olddb_connection = sqlite3.connect(get_database_fullname())
-    olddb_connection.row_factory = sqlite3.Row
-    olddb_cursor = olddb_connection.cursor()
-
-    files, anomalies_nbr = action__rebase__files(olddb_cursor, dest_params, newtargetpath)
+    files, anomalies_nbr = action__rebase__files(dest_params, newtargetpath)
 
     go_on = True
-    if anomalies_nbr != 0:
+    if anomalies_nbr:
         go_on = False
         answer = \
             input(("\nAt least one anomaly detected (see details above) "
@@ -1736,12 +1726,8 @@ def action__rebase(newtargetpath):
         if answer in ("y", "yes"):
             go_on = True
 
-    if not go_on:
-        olddb_connection.close()
-        return
-    else:
+    if go_on and not ARGS.off:
         action__rebase__write(new_db, files)
-        olddb_connection.close()
 
 #///////////////////////////////////////////////////////////////////////////////
 def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
@@ -1773,30 +1759,18 @@ def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
     """
     source_path = CFG_PARAMETERS["source"]["path"]
 
-    files = dict()      # dict to be returned.
+    files = set()       # set to be returned.
     filenames = set()   # to be used to avoid duplicates.
 
     anomalies_nbr = 0
-    for index, olddb_record in enumerate(olddb_cursor.execute('SELECT * FROM dbfiles')):
-        fullname = normpath(os.path.join(source_path, olddb_record["name"]))
-        filename_no_extens, extension = get_filename_and_extension(fullname)
+    for index, old_element in enumerate(read_target_db2()):
+        fullname = element.targetname
 
-        size = olddb_record["size"]
-        date = olddb_record["sourcedate"]
-        new_name = \
-            create_target_name(parameters=dest_params,
-                               hashid=olddb_record["hashid"],
-                               filename_no_extens=filename_no_extens,
-                               path=olddb_record["sourcename"],
-                               extension=extension,
-                               _size=size,
-                               date=datetime.utcfromtimestamp(date).strftime(CST__DTIME_FORMAT),
-                               database_index=index)
-        new_name = normpath(os.path.join(newtargetpath, new_name))
-        tagsstr = olddb_record["tagsstr"]
+        new_element = SelectElement(fullname, target=newtargetpath)
+        new_name = new_element.targetname
 
         LOGGER.info("      o %s : %s would be copied as %s",
-                    olddb_record["hashid"], olddb_record["name"], new_name)
+                    element.hashid, element.targetname, new_name)
 
         if new_name in filenames:
             LOGGER.warning("      ! anomaly : ancient file %s should be renamed as %s "
@@ -1812,7 +1786,7 @@ def action__rebase__files(olddb_cursor, dest_params, newtargetpath):
                            new_name, fullname)
             anomalies_nbr += 1
         else:
-            files[olddb_record["hashid"]] = (fullname, new_name, date, tagsstr)
+            files.add(new_element)
             filenames.add(new_name)
 
     return files, anomalies_nbr
@@ -1828,13 +1802,7 @@ def action__rebase__write(new_db, _files):
 
         PARAMETER :
                 o new_db                : (str) new database's name
-                o _files                : (dict) see action__rebase__files()
-
-        About the underscore before "_files" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
+                o files                : (dict) see action__rebase__files()
 
         no RETURNED VALUE
     """
@@ -1847,44 +1815,36 @@ def action__rebase__write(new_db, _files):
         if not ARGS.off:
             newdb_cursor.execute(CST__SQL__CREATE_DB)
 
-        for index, futurefile_hashid in enumerate(_files):
-            futurefile = _files[futurefile_hashid]
-            file_to_be_added = (futurefile_hashid,      # hashid
-                                futurefile[5],          # partial hashid
-                                futurefile[4],          # size
-                                futurefile[1],          # new name
-                                futurefile[0],          # sourcename
-                                futurefile[2],          # sourcedate
-                                futurefile[3])          # tags
+        for index, futurefile in enumerate(files):
 
-            strdate = datetime.utcfromtimestamp(futurefile[2]).strftime(CST__DTIME_FORMAT)
+            strdate = datetime.utcfromtimestamp(futurefile.time).strftime(CST__DTIME_FORMAT)
             LOGGER.info("    o (%s/%s) adding a file in the new database", index+1, len(_files))
-            LOGGER.info("      o hashid      : %s", futurefile_hashid)
-            LOGGER.info("      o source name : \"%s\"", futurefile[0])
-            LOGGER.info("      o desti. name : \"%s\"", futurefile[1])
+            LOGGER.info("      o hashid      : %s", futurefile.hashid)
+            LOGGER.info("      o source name : \"%s\"", futurefile.srcname)
+            LOGGER.info("      o desti. name : \"%s\"", futurefile.targetname)
             LOGGER.info("      o source date : %s", strdate)
-            LOGGER.info("      o size        : %s", futurefile[4])
-            LOGGER.info("      o tags        : \"%s\"", futurefile[3])
+            LOGGER.info("      o size        : %s", size_as_str(futurefile.size))
+            LOGGER.info("      o tags        : \"%s\"", futurefile.targettags)
 
             if not ARGS.off:
-                newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', file_to_be_added)
-                newdb_connection.commit()
+                newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', file_to_be_added[:7])
+
+        newdb_connection.commit()
 
     except sqlite3.IntegrityError as exception:
         LOGGER.exception("!!! An error occured while writing the new database : ")
         raise KatalError("An error occured while writing the new database : "+str(exception))
-
-    newdb_connection.close()
+    finally:
+        newdb_connection.close()
 
     # let's copy the files :
-    for index, futurefile_hashid in enumerate(_files):
-        futurefile = _files[futurefile_hashid]
-        old_name, new_name = futurefile[0], futurefile[1]
+    for index, futurefile in enumerate(files, 1):
+        old_name, new_name = futurefile.srcname, futurefile.targetname
 
         LOGGER.info("    o (%s/%s) copying \"%s\" as \"%s\"",
-                    index+1, len(_files), old_name, new_name)
+                    index, len(files), old_name, new_name)
         if not ARGS.off:
-            shutil.copyfile(old_name, new_name)
+            shutil.copy2(old_name, new_name)
 
     LOGGER.info("    ... done")
 
@@ -1901,7 +1861,7 @@ def action__reset():
     """
     LOGGER.info("    = about to delete (=move in the trash) the target files and the database.")
 
-    if not os.path.exists(normpath(get_database_fullname())):
+    if not os.path.exists(get_database_fullname()):
         LOGGER.warning("    ! no database found, nothing to do .")
         return
 
@@ -1912,26 +1872,22 @@ def action__reset():
         if answer not in ("y", "yes"):
             return
 
-    db_connection = sqlite3.connect(get_database_fullname())
-    db_connection.row_factory = sqlite3.Row
+    files_to_be_removed = [element.name for element in read_target_db2()]  # a list of fullname
+
     db_cursor = db_connection.cursor()
+    db_connection = sqlite3.connect(get_database_fullname())
 
-    files_to_be_removed = []  # a list of (hashid, fullname)
-    for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-        files_to_be_removed.append((db_record["hashid"], db_record["name"]))
-
-    for hashid, name in files_to_be_removed:
+    for name in files_to_be_removed:
         LOGGER.info("   o removing %s from the database and from the target path", name)
         if not ARGS.off:
             # let's remove the file from the target directory :
-            shutil.move(os.path.join(normpath(ARGS.targetpath), name),
+            shutil.move(name,
                         os.path.join(normpath(ARGS.targetpath),
-                                     CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, name))
+                                     CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, os.path.basename(name)))
             # let's remove the file from the database :
-            db_cursor.execute("DELETE FROM dbfiles WHERE hashid=?", (hashid,))
+            db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
 
-            db_connection.commit()
-
+    db_connection.commit()
     db_connection.close()
 
     LOGGER.info("    = ... done : the database should be empty, "
@@ -1951,33 +1907,31 @@ def action__rmnotags():
     """
     LOGGER.info("  = removing all files with no tags (=moving them to the trash).")
 
-    if not os.path.exists(normpath(get_database_fullname())):
+    if not os.path.exists(get_database_fullname()):
         LOGGER.warning("    ! no database found.")
     else:
-        db_connection = sqlite3.connect(get_database_fullname())
-        db_connection.row_factory = sqlite3.Row
-        db_cursor = db_connection.cursor()
+        files_to_be_removed = [element.targetname for element in read_target_db2()
+                               if not element.targettags]    # list of name
 
-        files_to_be_removed = []    # list of (hashid, name)
-        for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-            if db_record["tagsstr"] == "":
-                files_to_be_removed.append((db_record["hashid"], db_record["name"]))
-
-        if len(files_to_be_removed) == 0:
+        if not files_to_be_removed:
             LOGGER.warning("   ! no files to be removed.")
         else:
-            for hashid, name in files_to_be_removed:
+            db_connection = sqlite3.connect(get_database_fullname())
+            db_cursor = db_connection.cursor()
+
+            for name in files_to_be_removed:
                 LOGGER.info("   o removing %s from the database and from the target path", name)
                 if not ARGS.off:
                     # let's remove the file from the target directory :
-                    shutil.move(os.path.join(normpath(ARGS.targetpath), name),
+                    shutil.move(name,
                                 os.path.join(normpath(ARGS.targetpath),
-                                             CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, name))
-                    # let's remove the file from the database :
-                    db_cursor.execute("DELETE FROM dbfiles WHERE hashid=?", (hashid,))
+                                             CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, os.path.basename(name)))
 
-        db_connection.commit()
-        db_connection.close()
+                    # let's remove the file from the database :
+                    db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
+
+            db_connection.commit()
+            db_connection.close()
 
 #///////////////////////////////////////////////////////////////////////////////
 def action__rmtags(dest):
@@ -2022,11 +1976,11 @@ def action__select():
 
     LOGGER.info("    o size of the selected file(s) : %s", size_as_str(SELECT_SIZE_IN_BYTES))
 
-    if len(SELECT) == 0:
+    if not SELECT:
         LOGGER.warning("    ! no file selected ! "
                        "You have to modify the config file to get some files selected.")
     else:
-        ratio = len(SELECT)/(len(SELECT)+number_of_discarded_files)*100.0
+        ratio = len(SELECT) / (len(SELECT) + number_of_discarded_files) * 100.0
         LOGGER.info("    o number of selected files "
                     "(after discarding %s file(s)) : %s, "
                     "%.2f%% of the source files.",
@@ -2035,33 +1989,28 @@ def action__select():
     # let's check that the target path has sufficient free space :
     if CFG_PARAMETERS["target"]["mode"] != "nocopy":
         available_space = get_disk_free_space(ARGS.targetpath)
-        if available_space > SELECT_SIZE_IN_BYTES*CST__FREESPACE_MARGIN:
+        if available_space > SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
             size_ok = "ok"
-            colorconsole = "white"
+            LOGGER.info("    o required space : %s; "
+                        "available space on disk : %s (ok)",
+                        size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
         else:
-            size_ok = "!!! problem !!!"
-            colorconsole = "red"
-
-        LOGGER.info("    o required space : %s; "
-                    "available space on disk : %s (%s)",
-                    size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),
-                    size_ok, color=colorconsole)
+            LOGGER.error("    o required space : %s; "
+                        "available space on disk : %s (!!! problem !!!)",
+                        size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
 
     # if there's no --add option, let's give some examples of the target names :
     if not ARGS.add and CFG_PARAMETERS["target"]["mode"] != "nocopy":
-        example_index = 0
-        for hashid in SELECT:
+        for i, element in enumerate(SELECT):
 
-            complete_source_filename = SELECT[hashid].fullname
+            complete_source_filename = element.srcname
 
-            target_name = os.path.join(normpath(ARGS.targetpath), SELECT[hashid].targetname)
+            target_name = os.path.join(normpath(ARGS.targetpath), element.targetname)
 
             LOGGER.info("    o e.g. ... \"%s\" "
                         "would be copied as \"%s\" .", complete_source_filename, target_name)
 
-            example_index += 1
-
-            if example_index > 5:
+            if i > 5:
                 break
 
 #///////////////////////////////////////////////////////////////////////////////
@@ -2106,36 +2055,34 @@ def action__target_kill(filename):
         LOGGER.warning("    ! can't find \"%s\" file on disk.", filename)
         return -1
 
-    if not os.path.exists(normpath(get_database_fullname())):
+    if not os.path.exists(get_database_fullname()):
         LOGGER.warning("    ! no database found.")
         return -3
     else:
-        db_connection = sqlite3.connect(get_database_fullname())
-        db_connection.row_factory = sqlite3.Row
-        db_cursor = db_connection.cursor()
-
-        filename_hashid = None
-        for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-            if db_record["name"] == os.path.join(normpath(ARGS.targetpath), filename):
-                filename_hashid = db_record["hashid"]
-
-        if filename_hashid is None:
-            LOGGER.warning("    ! can't find \"%s\" file in the database.", filename)
-            res = -2
+        # We test if filename is already in db
+        for element in read_target_db2():
+            if element.name == os.path.join(normpath(ARGS.targetpath), filename):
+                break
         else:
-            if not ARGS.off:
-                # let's remove filename from the target directory :
-                shutil.move(os.path.join(normpath(ARGS.targetpath), filename),
-                            os.path.join(normpath(ARGS.targetpath),
-                                         CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, filename))
+            LOGGER.warning("    ! can't find \"%s\" file in the database.", filename)
+            return -2
 
-                # let's remove filename from the database :
-                db_cursor.execute("DELETE FROM dbfiles WHERE hashid=?", (filename_hashid,))
+        if not ARGS.off:
+            db_connection = sqlite3.connect(get_database_fullname())
+            db_cursor = db_connection.cursor()
+
+            # let's remove filename from the target directory :
+            shutil.move(os.path.join(normpath(ARGS.targetpath), filename),
+                        os.path.join(normpath(ARGS.targetpath),
+                                        CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, filename))
+
+            # let's remove filename from the database :
+            db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (element.targetname,))
 
             res = 0  # success.
 
-        db_connection.commit()
-        db_connection.close()
+            db_connection.commit()
+            db_connection.close()
 
         LOGGER.info("    ... done")
         return res
@@ -2231,80 +2178,6 @@ def action__whatabout(src):
             show_infos_about_a_srcfile(normpath(src))
 
     return True
-
-#///////////////////////////////////////////////////////////////////////////////
-def add_keywords_in_targetstr(srcstring,
-                              hashid,
-                              filename_no_extens,
-                              path,
-                              extension,
-                              _size,
-                              date,
-                              database_index):
-    """
-        add_keywords_in_targetstr()
-        ________________________________________________________________________
-
-          The function replaces some keywords in the string by the parameters given
-        to this function.
-          The function returned a string which may be used to create target files.
-
-        see the available keywords in the documentation.
-            (see documentation:configuration file)
-        ________________________________________________________________________
-
-        PARAMETERS
-                o srcstring                    : (str)
-                o hashid                       : (str)
-                o filename_no_extens           : (str)
-                o path                         : (str
-                o extensiont : in the .ini files, '%' have to be written twice (as in
-                                 '%%p', e.g.) but Python reads it as if only one % was
-                                                  written.
-                                                  : (str)
-                o _size                        : (int)
-                o date                         : (str) see CST__DTIME_FORMAT
-                o database_index               : (int)
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
-
-        RETURNED VALUE
-                (str)the expected string
-    """
-    res = srcstring
-
-    # beware : order matters !
-    res = res.replace("%ht",
-                      hex(int(datetime.strptime(date,
-                                                CST__DTIME_FORMAT).timestamp()))[2:])
-
-    res = res.replace("%h", hashid)
-
-    res = res.replace("%ff", remove_illegal_characters(filename_no_extens))
-    res = res.replace("%f", filename_no_extens)
-
-    res = res.replace("%pp", remove_illegal_characters(path))
-    res = res.replace("%p", path)
-
-    res = res.replace("%ee", remove_illegal_characters(extension))
-    res = res.replace("%e", extension)
-
-    res = res.replace("%s", str(_size))
-
-    res = res.replace("%dd", remove_illegal_characters(date))
-
-    res = res.replace("%t",
-                      str(int(datetime.strptime(date,
-                                                CST__DTIME_FORMAT).timestamp())))
-
-    res = res.replace("%i",
-                      remove_illegal_characters(str(database_index)))
-
-    return res
 
 #///////////////////////////////////////////////////////////////////////////////
 def configure_loggers():
@@ -2432,185 +2305,6 @@ def create_subdirs_in_target_path():
             os.mkdir(normpath(fullpath))
 
 #/////////////////////////////////////////////////////////////////////////////////////////
-def create_target_name(parameters,
-                       hashid,
-                       filename_no_extens,
-                       path,
-                       extension,
-                       _size,
-                       date,
-                       database_index):
-    """
-        create_target_name()
-        ________________________________________________________________________
-
-        Create the name of a file (a target file) from various informations
-        given by the parameters. The function reads the string stored in
-        parameters["target"]["name of the target files"] and replaces some
-        keywords in the string by the parameters given to this function.
-
-        see the available keywords in the documentation.
-            (see documentation:configuration file)
-
-        caveat : in the .ini files, '%' have to be written twice (as in
-                 '%%p', e.g.) but Python reads it as if only one % was
-                 written.
-        ________________________________________________________________________
-
-        PARAMETERS
-                o parameters                   : an object returned by
-                                                  read_parameters_from_cfgfile(),
-                                                  like CFG_PARAMETERS
-                o hashid                       : (str)
-                o filename_no_extens           : (str)
-                o path                         : (str
-                o extension                    : (str)
-                o _size                        : (int)
-                o date                         : (str) see CST__DTIME_FORMAT
-                o database_index               : (int)
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
-
-        RETURNED VALUE
-                (str)name
-    """
-    return(add_keywords_in_targetstr(srcstring=parameters["target"]["name of the target files"],
-                                     hashid=hashid,
-                                     filename_no_extens=filename_no_extens,
-                                     path=path,
-                                     extension=extension,
-                                     _size=_size,
-                                     date=date,
-                                     database_index=database_index))
-
-#/////////////////////////////////////////////////////////////////////////////////////////
-def create_target_name_and_tags(parameters,
-                                hashid,
-                                filename_no_extens,
-                                path,
-                                extension,
-                                _size,
-                                date,
-                                database_index):
-    """
-        create_target_name_and_tags()
-        ________________________________________________________________________
-
-        Create the name of a file (a target file) from various informations
-        given by the parameters. The function reads the string stored in
-        parameters["target"]["name of the target files"] and in
-        parameters["target"]["tags"] and replaces some
-        keywords in the string by the parameters given to this function.
-
-        see the available keywords in the documentation.
-            (see documentation:configuration file)
-
-        caveat : in the .ini files, '%' have to be written twice (as in
-                 '%%p', e.g.) but Python reads it as if only one % was
-                 written.
-        ________________________________________________________________________
-
-        PARAMETERS
-                o parameters                   : an object returned by
-                                                 read_parameters_from_cfgfile(),
-                                                 like CFG_PARAMETERS
-                o hashid                       : (str)
-                o filename_no_extens           : (str)
-                o path                         : (str
-                o extension                    : (str)
-                o _size                        : (int)
-                o date                         : (str) see CST__DTIME_FORMAT
-                o database_index               : (int)
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
-
-        RETURNED VALUE
-                ( (str)name, (str)tags )
-    """
-    name = create_target_name(parameters,
-                              hashid,
-                              filename_no_extens,
-                              path,
-                              extension,
-                              _size,
-                              date,
-                              database_index)
-
-    tags = create_target_name(parameters,
-                              hashid,
-                              filename_no_extens,
-                              path,
-                              extension,
-                              _size,
-                              date,
-                              database_index)
-    return (name, tags)
-
-#/////////////////////////////////////////////////////////////////////////////////////////
-def create_target_tags(parameters,
-                       hashid,
-                       filename_no_extens,
-                       path,
-                       extension,
-                       _size,
-                       date,
-                       database_index):
-    """
-        create_target_tags()
-        ________________________________________________________________________
-
-        Create the tags of a file (a target file) from various informations
-        given by the parameters. The function reads the string stored in
-        parameters["target"]["tags"] and replaces some
-        keywords in the string by the parameters given to this function.
-
-        see the available keywords in the documentation.
-            (see documentation:configuration file)
-
-        caveat : in the .ini files, '%' have to be written twice (as in
-                 '%%p', e.g.) but Python reads it as if only one % was
-                 written.
-        ________________________________________________________________________
-
-        PARAMETERS
-                o parameters                   : an object returned by
-                                                 read_parameters_from_cfgfile(),
-                                                 like CFG_PARAMETERS
-                o hashid                       : (str)
-                o filename_no_extens           : (str)
-                o path                         : (str
-                o extension                    : (str)
-                o _size                        : (int)
-                o date                         : (str) see CST__DTIME_FORMAT
-                o database_index               : (int)
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
-
-        RETURNED VALUE
-                (str)name
-    """
-    return(add_keywords_in_targetstr(srcstring=parameters["target"]["tags"],
-                                     hashid=hashid,
-                                     filename_no_extens=filename_no_extens,
-                                     path=path,
-                                     extension=extension,
-                                     _size=_size,
-                                     date=date,
-                                     database_index=database_index))
-
-#///////////////////////////////////////////////////////////////////////////////
 def draw_table(rows, data):
     """
         draw_table()
@@ -2709,146 +2403,6 @@ def eval_filters(filters):
                                                                               exception))
 
 #///////////////////////////////////////////////////////////////////////////////
-def fill_select(debug_datatime=None):
-    """
-        fill_select()
-        ________________________________________________________________________
-
-        Fill SELECT and SELECT_SIZE_IN_BYTES from the files stored in
-        the source path. This function is used by action__select() .
-        ________________________________________________________________________
-
-        PARAMETERS
-                o debug_datatime : None (normal value) or a dict of CST__DTIME_FORMAT
-                                   strings if in debug/test mode.
-
-        RETURNED VALUE
-                (int) the number of discarded files
-    """
-    global SELECT, SELECT_SIZE_IN_BYTES
-
-    source_path = CFG_PARAMETERS["source"]["path"]
-
-    SELECT = {}  # see the SELECT format in the documentation:selection
-    SELECT_SIZE_IN_BYTES = 0
-    number_of_discarded_files = 0
-
-    # these variables will be used by fill_select__checks() too.
-    prefix = ""
-    fullname = ""
-
-    file_index = 0  # number of the current file in the source directory.
-    for dirpath, _, filenames in os.walk(normpath(source_path)):
-        for filename in filenames:
-
-            # ..................................................................
-            # gathering informations about filename :
-            # ..................................................................
-            file_index += 1
-            fullname = os.path.join(dirpath, filename)
-
-            # ..................................................................
-            # protection against the FileNotFoundError exception.
-            # This exception would be raised on broken symbolic link on the
-            #   "size = os.stat(normpath(fullname)).st_size" line (see below).
-            # ..................................................................
-            if not os.path.exists(fullname):
-                LOGGER.warning("    ! browsing %s, an error occured : "
-                               "can't read the file \"%s\"", source_path, fullname)
-
-            else:
-                fname_no_extens, extension = get_filename_and_extension(normpath(filename))
-
-                # if we know the total amount of files to be selected (see the --infos option),
-                # we can add the percentage done :
-                prefix = ""
-                if INFOS_ABOUT_SRC_PATH[1] is not None and INFOS_ABOUT_SRC_PATH[1] != 0:
-                    prefix = "[{0:.4f}%]".format(file_index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
-
-                # ..................................................................
-                # what should we do with 'filename' ?
-                # ..................................................................
-                if not FILTER(fullname):
-                    # ... nothing : incompatibility with at least one filter :
-                    number_of_discarded_files += 1
-
-                    if ARGS.verbosity == 'high':
-                        LOGGER.info("    - %s discarded \"%s\" "
-                                    ": incompatibility with the filter(s)",
-                                    prefix, fullname)
-                else:
-                    size = os.stat(fullname).st_size
-                    time = datetime.fromtimestamp(os.stat(fullname).st_mtime)
-
-                    # 'filename' being compatible with the filters, let's try
-                    # to add it in the datase :
-                    tobeadded, partialhashid, hashid = thefilehastobeadded__db(fullname, size)
-
-                    if tobeadded and hashid in SELECT:
-                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-                        # tobeadded is True but hashid is already in SELECT; let's discard
-                        # <filename> :
-                        number_of_discarded_files += 1
-
-                        if ARGS.verbosity == 'high':
-                            LOGGER.info("    - %s (similar hashid among the files to be copied, "
-                                        "in the source directory) discarded \"%s\"",
-                                        prefix, fullname)
-
-                    elif tobeadded:
-                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-                        # ok, let's add <filename> to SELECT...
-                        SELECT[hashid] = \
-                         SELECTELEMENT(fullname=fullname,
-                                       partialhashid=partialhashid,
-                                       path=dirpath,
-                                       filename_no_extens=fname_no_extens,
-                                       extension=extension,
-                                       size=size,
-                                       date=time.strftime(CST__DTIME_FORMAT),
-                                       targetname= \
-                                          create_target_name(parameters=CFG_PARAMETERS,
-                                                             hashid=hashid,
-                                                             filename_no_extens=fname_no_extens,
-                                                             path=dirpath,
-                                                             extension=extension,
-                                                             _size=size,
-                                                             date=time.strftime(CST__DTIME_FORMAT),
-                                                             database_index=len(TARGET_DB) + \
-                                                                             len(SELECT)),
-                                       targettags= \
-                                          create_target_tags(parameters=CFG_PARAMETERS,
-                                                             hashid=hashid,
-                                                             filename_no_extens=fname_no_extens,
-                                                             path=dirpath,
-                                                             extension=extension,
-                                                             _size=size,
-                                                             date=time.strftime(CST__DTIME_FORMAT),
-                                                             database_index=len(TARGET_DB) + \
-                                                                             len(SELECT)))
-
-                        LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
-                                    prefix, fullname, len(SELECT))
-                        LOGGER.info("       size=%s; date=%s",
-                                    size, time.strftime(CST__DTIME_FORMAT))
-
-                        SELECT_SIZE_IN_BYTES += size
-
-                    else:
-                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-                        # tobeadded is False : let's discard <filename> :
-                        number_of_discarded_files += 1
-
-                        if ARGS.verbosity == 'high':
-                            LOGGER.info("    - %s (similar hashid in the database) "
-                                        " discarded \"%s\"", prefix, fullname)
-
-
-    return fill_select__checks(number_of_discarded_files=number_of_discarded_files,
-                               prefix=prefix,
-                               fullname=fullname)
-
-#///////////////////////////////////////////////////////////////////////////////
 def fill_select2(debug_datatime=None):
     """
         fill_select()
@@ -2869,7 +2423,7 @@ def fill_select2(debug_datatime=None):
 
     source_path = CFG_PARAMETERS["source"]["path"]
 
-    SELECT = {}  # see the SELECT format in the documentation:selection
+    SELECT = set()  # see the SELECT format in the documentation:selection
     SELECT_SIZE_IN_BYTES = 0
     number_of_discarded_files = 0
 
@@ -2918,12 +2472,11 @@ def fill_select2(debug_datatime=None):
                     element = SelectElement(fullname)
                     # 'filename' being compatible with the filters, let's try
                     # to add it in the datase :
-                    tobeadded = thefilehastobeadded__db(element)
+                    tobeadded = element in TARGET_DB
 
-                    if tobeadded and hashid in SELECT:
-                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-                        # tobeadded is True but hashid is already in SELECT; let's discard
-                        # <filename> :
+                    if tobeadded and element in SELECT:
+                        # tobeadded is True but element is already in SELECT;
+                        # let's discard it
                         number_of_discarded_files += 1
 
                         if ARGS.verbosity == 'high':
@@ -2932,17 +2485,15 @@ def fill_select2(debug_datatime=None):
                                         prefix, fullname)
 
                     elif tobeadded:
-                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
                         # ok, let's add <filename> to SELECT...
-                        SELECT[element.hashid] = element
+                        SELECT.add(element)
 
                         LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
                                     prefix, fullname, len(SELECT))
                         LOGGER.info("       size=%s; date=%s",
-                                    element.size, element.date)
+                                    element.size, element.date) #TODO remove date
 
                     else:
-                        # . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
                         # tobeadded is False : let's discard <filename> :
                         number_of_discarded_files += 1
 
@@ -2951,7 +2502,7 @@ def fill_select2(debug_datatime=None):
                                         " discarded \"%s\"", prefix, fullname)
 
 
-    SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT.items())
+    SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT)
 
     return fill_select__checks(number_of_discarded_files=number_of_discarded_files,
                                prefix=prefix,
@@ -2983,15 +2534,15 @@ def fill_select__checks(number_of_discarded_files, prefix, fullname):
     # (1) future filename's can't be in conflict with another file in SELECT
     LOGGER.info("       ... let's check that future filenames aren't in conflict "
                 "with another file in SELECT...")
-    to_be_discarded = []        # a list of hash.
-    for (selectedfile_hash1, selectedfile_hash2) in itertools.combinations(SELECT, 2):
+    to_be_discarded = set()  # a set of element
+    for (selectedfile1, selectedfile2) in itertools.combinations(SELECT, 2):
 
-        if SELECT[selectedfile_hash1].targetname == SELECT[selectedfile_hash2].targetname:
+        if selectedfile1.targetname == selectedfile2.targetname:
             LOGGER.warning("    ! %s discarded \"%s\" : target filename \"%s\" would be used "
                            "two times for two different files !",
-                           prefix, fullname, SELECT[selectedfile_hash2].targetname)
+                           prefix, fullname, selectedfile2.targetname)
 
-            to_be_discarded.append(selectedfile_hash2)
+            to_be_discarded.add(selectedfile2)
 
     # (2) future filename's can't be in conflict with another file already
     # stored in the target path :
@@ -2999,14 +2550,14 @@ def fill_select__checks(number_of_discarded_files, prefix, fullname):
         LOGGER.info("       ... let's check that future filenames aren't in conflict "
                     "with another file already")
         LOGGER.info("           stored in the target path...")
-        for selectedfile_hash in SELECT:
+        for selectedfile in SELECT:
             if os.path.exists(os.path.join(normpath(ARGS.targetpath),
-                                           SELECT[selectedfile_hash].targetname)):
+                                           selectedfile.targetname)):
                 LOGGER.warning("    ! %s discarded \"%s\" : target filename \"%s\" already "
                                "exists in the target path !",
-                               prefix, fullname, SELECT[selectedfile_hash].targetname)
+                               prefix, fullname, selectedfile.targetname)
 
-                to_be_discarded.append(selectedfile_hash)
+                to_be_discarded.add(selectedfile)
 
     # final message and deletion :
     if len(to_be_discarded) == 0:
@@ -3019,12 +2570,13 @@ def fill_select__checks(number_of_discarded_files, prefix, fullname):
         LOGGER.warning("    !  beware : %s anomal%s detected. "
                        "See details above.", len(to_be_discarded), ending)
 
-        for _hash in to_be_discarded:
+        for element in to_be_discarded:
             # e.g. , _hash may have discarded two times (same target name + file
             # already present on disk), hence the following condition :
-            if _hash in SELECT:
-                del SELECT[_hash]
-                number_of_discarded_files += 1
+            LOGGER.warning('    ! %s discerded', element.srcname)
+
+            SELECT.remove(element)
+            number_of_discarded_files += 1
 
     return number_of_discarded_files
 
@@ -3051,8 +2603,7 @@ def get_disk_free_space(path):
         get_disk_free_space()
         ________________________________________________________________________
 
-        return the available space on disk() in bytes. Code for Windows system
-        from http://stackoverflow.com/questions/51658/ .
+        return the available space on disk() in bytes.
         ________________________________________________________________________
 
         PARAMETER
@@ -3062,14 +2613,8 @@ def get_disk_free_space(path):
         RETURNED VALUE
                 the expected int(eger)
     """
-    if CST__PLATFORM == 'Windows':
-        free_bytes = ctypes.c_ulonglong(0)
-        ctypes.windll.kernel32.GetDiskFreeSpaceExW(ctypes.c_wchar_p(path),
-                                                   None, None, ctypes.pointer(free_bytes))
-        return free_bytes.value
-    else:
-        stat = os.statvfs(normpath(path))
-        return stat.f_bavail * stat.f_frsize
+    # Normally, whutil should be plateform independant.
+    return shutil.disk_usage(normath(path)).free
 
 #///////////////////////////////////////////////////////////////////////////////
 def get_filename_and_extension(path):
@@ -3280,7 +2825,7 @@ def main_actions():
         read_filters()
         action__select()
 
-        if ARGS.verbosity != 'none' and len(SELECT) > 0:
+        if ARGS.verbosity != 'none' and SELECT:
             answer = \
                 input("\nDo you want to update the target database and to {0} the selected "
                       "files into the target directory "
@@ -3456,41 +3001,38 @@ def modify_the_tag_of_some_files(tag, dest, mode):
     if not os.path.exists(normpath(get_database_fullname())):
         LOGGER.warning("    ! no database found.")
     else:
-        db_connection = sqlite3.connect(get_database_fullname())
-        db_connection.row_factory = sqlite3.Row
-        db_cursor = db_connection.cursor()
 
-        files_to_be_modified = []       # a list of (hashids, name)
-        for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-            if fnmatch.fnmatch(db_record["name"], dest):
-                files_to_be_modified.append((db_record["hashid"], db_record["name"]))
+        files_to_be_modified = [element for element in read_target_db2()
+                                if fnmatch(element.name, dest)]       # a list of name
 
-        if len(files_to_be_modified) == 0:
+        if not files_to_be_modified:
             LOGGER.info("    * no files match the given name(s) given as a parameter.")
         else:
-            # let's apply the tag(s) to the <files_to_be_modified> :
-            for hashid, filename in files_to_be_modified:
+            db_connection = sqlite3.connect(get_database_fullname())
+            db_cursor = db_connection.cursor()
 
-                LOGGER.info("    o applying the tag string \"%s\" to %s.", tag, filename)
+            # let's apply the tag(s) to the <files_to_be_modified> :
+            for element in files_to_be_modified:
+
+                LOGGER.info("    o applying the tag string \"%s\" to %s.", tag, element.targetname)
 
                 if ARGS.off:
                     pass
 
                 elif mode == "set":
-                    sqlorder = 'UPDATE dbfiles SET tagsstr=? WHERE hashid=?'
-                    db_connection.execute(sqlorder, (tag, hashid))
+                    sqlorder = 'UPDATE dbfiles SET tagsstr=? WHERE targetname=?'
+                    db_cursor.execute(sqlorder, (tag, element.targetname))
 
                 elif mode == "append":
-                    sqlorder = ('UPDATE dbfiles SET tagsstr = tagsstr || \"{0}{1}\" '
-                                'WHERE hashid=\"{2}\"').format(CST__TAG_SEPARATOR, tag, hashid)
-                    db_connection.executescript(sqlorder)
+                    sqlorder = ('UPDATE dbfiles SET tagsstr=? WHERE targetname=?')
+                    db_cursor.executescript(sqlorder, (element.targettags + CST__TAG_SEPARATOR + tag,
+                                                       element.targetname))
 
                 else:
                     raise KatalError("mode argument \"{0}\" isn't known".format(mode))
 
             db_connection.commit()
-
-        db_connection.close()
+            db_connection.close()
 
 #///////////////////////////////////////////////////////////////////////////////
 def normpath(path):
@@ -3560,6 +3102,7 @@ def read_target_db():
 
         no PARAMETER, no RETURNED VALUE
     """
+    global TARGET_DB
     if not os.path.exists(normpath(get_database_fullname())):
         create_empty_db(normpath(get_database_fullname()))
 
@@ -3568,9 +3111,39 @@ def read_target_db():
     db_cursor = db_connection.cursor()
 
     for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-        TARGET_DB[db_record["hashid"]] = SelectElement.from_db_row(db_record)
+        TARGET_DB.add(SelectElement.from_db_row(db_record))
 
     db_connection.close()
+
+#/////////////////////////////////////////////////////////////////////////////////////////
+def read_target_db2():
+    """
+        read_target_db()
+        ________________________________________________________________________
+
+        Read the database stored in the target directory and initialize
+        TARGET_DB.
+        ________________________________________________________________________
+
+        no PARAMETER,
+
+        RETURNED VALUE
+            target_db
+    """
+    if not os.path.exists(normpath(get_database_fullname())):
+        create_empty_db(normpath(get_database_fullname()))
+
+    db_connection = sqlite3.connect(get_database_fullname())
+    db_connection.row_factory = sqlite3.Row
+    db_cursor = db_connection.cursor()
+
+    target_db = set()
+    for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
+        target_db.add(SelectElement.from_db_row(db_record))
+
+    db_connection.close()
+
+    return target_db
 
 #/////////////////////////////////////////////////////////////////////////////////////////
 def remove_illegal_characters(src):
@@ -3610,7 +3183,7 @@ def shortstr(string, max_length):
                 the expected string
     """
     if len(string) > max_length:
-        return "[...]"+string[-(max_length-5):]
+        return "[...]"+string[- (max_length-5):]
     return string
 
 #///////////////////////////////////////////////////////////////////////////////
@@ -3859,134 +3432,8 @@ def tagsstr_repr(tagsstr):
         RETURNED VALUE
             the expected (str)string
     """
-    if tagsstr.startswith(CST__TAG_SEPARATOR):
-        # let's remove the first tag separator :
-        return tagsstr[1:]
-    else:
-        return tagsstr
-
-#///////////////////////////////////////////////////////////////////////////////
-def thefilehastobeadded__db(filename, _size):
-    """
-        thefilehastobeadded__db()
-        ________________________________________________________________________
-
-        Return True if the file isn't already known in the database.
-        ________________________________________________________________________
-
-        PARAMETERS
-                o filename     : (str) file's name
-                o _size         : (int) file's size, in bytes.
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
-
-        RETURNED VALUE
-                either (False, None, None)
-                either (True, partial hashid, hashid)
-    """
-    # (1) hont(datetime.strptime(date, CST__DTIME_FORMAT))w many file(s) in the database have a size equal to _size ?
-    # a list of hashid(s) :
-    res = [hashid for hashid in TARGET_DB if TARGET_DB[hashid][1] == _size]
-
-    if not res:
-        return (True,
-                hashfile64(filename=filename,
-                           stop_after=CST__PARTIALHASHID_BYTESNBR),
-                hashfile64(filename=filename))
-
-    # (2) how many file(s) among those in <res> have a partial hashid equal
-    # to the partial hashid of filename ?
-    src_partialhashid = hashfile64(filename=filename,
-                                   stop_after=CST__PARTIALHASHID_BYTESNBR)
-
-    new_res = [hashid for hashid in res if TARGET_DB[0] == target_partialhashid]
-
-    res = new_res
-    if not res:
-        return (True,
-                src_partialhashid,
-                hashfile64(filename=filename))
-
-    # (3) how many file(s) among those in <res> have an hashid equal to the
-    # hashid of filename ?
-    src_hashid = hashfile64(filename=filename)
-    new_res = [hashid for hashid in res if hashid == src_hashid]
-
-    res = new_res
-    if not res:
-        return (True,
-                src_partialhashid,
-                src_hashid)
-
-    if not ARGS.strictcmp:
-        return (False, None, None)
-
-    # (4) bit-to-bit comparision :
-    for hashid in res:
-        if not filecmp.cmp(filename, TARGET_DB[hashid][2], shallow=False):
-            return (True,
-                    src_partialhashid,
-                    src_hashid)
-
-    return (False, None, None)
-
-#///////////////////////////////////////////////////////////////////////////////
-def thefilehastobeadded__db2(filename, _size):
-    """
-        thefilehastobeadded__db()
-        ________________________________________________________________________
-
-        Return True if the file isn't already known in the database.
-        ________________________________________________________________________
-
-        PARAMETERS
-                o filename     : (str) file's name
-                o _size         : (int) file's size, in bytes.
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
-
-        RETURNED VALUE
-                either (False, None, None)
-                either (True, partial hashid, hashid)
-    """
-    # (1) how many file(s) in the database have a size equal to _size ?
-    # a list of hashid(s) :
-    res = [hashid for hashid in TARGET_DB if TARGET_DB[hashid][1] == element.size]
-
-    if not res:
-        return True
-
-    # (2) how many file(s) among those in <res> have a partial hashid equal
-    # to the partial hashid of filename ?
-    new_res = [hashid for hashid in res if TARGET_DB[hashid][0] == element.partialhashid]
-
-    res = new_res
-    if not res:
-        return True
-
-    # (3) how many file(s) among those in <res> have an hashid equal to the
-    # hashid of filename ?
-    new_res = [hashid for hashid in res if hashid == element.hashid]
-
-    res = new_res
-    if not res:
-        return True
-
-    if ARGS.strictcmp:
-        # (4) bit-to-bit comparision :
-        return all(not filecmp.cmp(element.filename, TARGET_DB[hashid][2], shallow=False)
-                   for hashid in res)
-
-    # else, if some files stay, they must be equal
-    return False
+    # Transform ,tag1,tag2, in tag1, tag2
+    return ', '.join(s.strip() for s in tagsstr.split(CST__TAG_SEPARATOR) if s)
 
 #///////////////////////////////////////////////////////////////////////////////
 def welcome(timestamp_start):
