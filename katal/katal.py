@@ -1992,15 +1992,10 @@ def action__select():
     # if there's no --add option, let's give some examples of the target names :
     if not ARGS.add and CFG_PARAMETERS["target"]["mode"] != "nocopy":
         for i, element in enumerate(SELECT):
-
-            complete_source_filename = element.srcname
-
-            target_name = os.path.join(normpath(ARGS.targetpath), element.targetname)
-
             LOGGER.info("    o e.g. ... \"%s\" "
-                        "would be copied as \"%s\" .", complete_source_filename, target_name)
+                        "would be copied as \"%s\" .", element.srcname, element.targetname)
 
-            if i > 5:
+            if i >= 5:
                 break
 
 #///////////////////////////////////////////////////////////////////////////////
@@ -2394,164 +2389,67 @@ def fill_select2():
         RETURNED VALUE
                 (int) the number of discarded files
     """
-    global SELECT, SELECT_SIZE_IN_BYTES
+    global SELECT_SIZE_IN_BYTES
 
-    source_path = CFG_PARAMETERS["source"]["path"]
+    source_path = normpath(CFG_PARAMETERS["source"]["path"])
+    targetname_set = set()
 
-    SELECT = set()  # see the SELECT format in the documentation:selection
-    SELECT_SIZE_IN_BYTES = 0
-    number_of_discarded_files = 0
+    for index, fullname in (os.path.join(dirpath, filename)
+                            for dirpath, _, filenames in os.walk(source_path)
+                            for filename in filenames):
+        # if we know the total amount of files to be selected (see the --infos option),
+        # we can add the percentage done :
+        if INFOS_ABOUT_SRC_PATH[1]:
+            prefix = "[{0:.4f}%] ".format(file_index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
+        else:
+            prefix = ""
 
-    # these variables will be used by fill_select__checks() too.
-    prefix = ""
-    fullname = ""
+        # protection against the FileNotFoundError exception.
+        # This exception would be raised on broken symbolic link
+        if not os.path.exists(fullname):
+            LOGGER.warning("    ! %sbrowsing %s, an error occured : "
+                            "can't read the file \"%s\"", source_path, fullname)
 
-    file_index = 0  # number of the current file in the source directory.
-    for dirpath, _, filenames in os.walk(normpath(source_path)):
-        for filename in filenames:
-            # ..................................................................
-            # gathering informations about filename :
-            # ..................................................................
-            file_index += 1
-            fullname = os.path.join(dirpath, filename)
+        elif not FILTER(fullname):
+            # ... nothing : incompatibility with at least one filter :
+            LOGGER.debug("    - %sdiscarded \"%s\" : incompatibility with the filter(s)",
+                            prefix, fullname)
+        else:
+            element = SelectElement(fullname)
+            # 'filename' being compatible with the filters, let's try
+            # to add it in the datase :
+            if element in SELECT:
+                # tobeadded is True but element is already in SELECT;
+                # let's discard it
+                number_of_discarded_files += 1
+                LOGGER.debug("    - %s(similar hashid among the files to be copied, "
+                                "in the source directory) discarded \"%s\"",
+                                prefix, fullname)
 
-            # ..................................................................
-            # protection against the FileNotFoundError exception.
-            # This exception would be raised on broken symbolic link on the
-            #   "size = os.stat(normpath(fullname)).st_size" line (see below).
-            # ..................................................................
-            if not os.path.exists(fullname):
-                LOGGER.warning("    ! browsing %s, an error occured : "
-                               "can't read the file \"%s\"", source_path, fullname)
+            elif element in TARGET_DB:
+                # element already defined in db : let's discard <filename> :
+                number_of_discarded_files += 1
+                LOGGER.debug("    - %s(similar hashid in the database) "
+                                " discarded \"%s\"", prefix, fullname)
+
+            elif element.targetname in targetname_set or os.path.exists(element.targetname):
+                logger.error('    ! %sTwo files exist for "%s". Aborting',
+                             prefix, element.targetname)
+                raise KatalError('   Find targetnames which will be unique')
 
             else:
+                # ok, let's add <filename> to SELECT...
+                SELECT.add(element)
 
-                # if we know the total amount of files to be selected (see the --infos option),
-                # we can add the percentage done :
-                prefix = ""
-                if INFOS_ABOUT_SRC_PATH[1] is not None and INFOS_ABOUT_SRC_PATH[1] != 0:
-                    prefix = "[{0:.4f}%]".format(file_index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
+                LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
+                            prefix, fullname, len(SELECT))
+                LOGGER.info("       size=%s; date=%s",
+                            element.size, element.date)
 
-                # ..................................................................
-                # what should we do with 'filename' ?
-                # ..................................................................
-                if not FILTER(fullname):
-                    # ... nothing : incompatibility with at least one filter :
-                    number_of_discarded_files += 1
-
-                    if ARGS.verbosity == 'high':
-                        LOGGER.info("    - %s discarded \"%s\" "
-                                    ": incompatibility with the filter(s)",
-                                    prefix, fullname)
-                else:
-                    element = SelectElement(fullname)
-                    # 'filename' being compatible with the filters, let's try
-                    # to add it in the datase :
-                    tobeadded = element in TARGET_DB
-
-                    if tobeadded and element in SELECT:
-                        # tobeadded is True but element is already in SELECT;
-                        # let's discard it
-                        number_of_discarded_files += 1
-
-                        if ARGS.verbosity == 'high':
-                            LOGGER.info("    - %s (similar hashid among the files to be copied, "
-                                        "in the source directory) discarded \"%s\"",
-                                        prefix, fullname)
-
-                    elif tobeadded:
-                        # ok, let's add <filename> to SELECT...
-                        SELECT.add(element)
-
-                        LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
-                                    prefix, fullname, len(SELECT))
-                        LOGGER.info("       size=%s; date=%s",
-                                    element.size, element.date)
-
-                    else:
-                        # tobeadded is False : let's discard <filename> :
-                        number_of_discarded_files += 1
-
-                        if ARGS.verbosity == 'high':
-                            LOGGER.info("    - %s (similar hashid in the database) "
-                                        " discarded \"%s\"", prefix, fullname)
 
 
     SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT)
-
-    return fill_select__checks(number_of_discarded_files=number_of_discarded_files,
-                               prefix=prefix,
-                               fullname=fullname)
-
-#///////////////////////////////////////////////////////////////////////////////
-def fill_select__checks(number_of_discarded_files, prefix, fullname):
-    """
-        fill_select__checks()
-        ________________________________________________________________________
-
-        To be called at the end of fill_select() : remove some files from SELECT
-        if they don't pass the checks :
-                (1) future filename's can't be in conflict with another file in SELECT
-                (2) future filename's can't be in conflict with another file already
-                    stored in the target path.
-        ________________________________________________________________________
-
-        PARAMETERS :
-                o number_of_discarded_files    : (int) see fill_select()
-                o prefix                       : (str) see fill_select()
-                o fullname                     : (str) see fill_select()
-
-        RETURNED VALUE
-                (int) the number of discarded files
-    """
-    LOGGER.info("    o checking that there's no anomaly with the selected files...")
-
-    # (1) future filename's can't be in conflict with another file in SELECT
-    LOGGER.info("       ... let's check that future filenames aren't in conflict "
-                "with another file in SELECT...")
-    to_be_discarded = set()  # a set of element
-    for (selectedfile1, selectedfile2) in itertools.combinations(SELECT, 2):
-
-        if selectedfile1.targetname == selectedfile2.targetname:
-            LOGGER.warning("    ! %s discarded \"%s\" : target filename \"%s\" would be used "
-                           "two times for two different files !",
-                           prefix, fullname, selectedfile2.targetname)
-
-            to_be_discarded.add(selectedfile2)
-
-    # (2) future filename's can't be in conflict with another file already
-    # stored in the target path :
-    if not CFG_PARAMETERS["target"]["mode"] == 'nocopy':
-        LOGGER.info("       ... let's check that future filenames aren't in conflict "
-                    "with another file already")
-        LOGGER.info("           stored in the target path...")
-        for selectedfile in SELECT:
-            if os.path.exists(os.path.join(normpath(ARGS.targetpath),
-                                           selectedfile.targetname)):
-                LOGGER.warning("    ! %s discarded \"%s\" : target filename \"%s\" already "
-                               "exists in the target path !",
-                               prefix, fullname, selectedfile.targetname)
-
-                to_be_discarded.add(selectedfile)
-
-    # final message and deletion :
-    if len(to_be_discarded) == 0:
-        LOGGER.info("    o  everything ok : no anomaly detected. See details above.")
-    else:
-        if len(to_be_discarded) == 1:
-            ending = "y"
-        else:
-            ending = "ies"
-        LOGGER.warning("    !  beware : %s anomal%s detected. "
-                       "See details above.", len(to_be_discarded), ending)
-
-        for element in to_be_discarded:
-            # e.g. , _hash may have discarded two times (same target name + file
-            # already present on disk), hence the following condition :
-            LOGGER.warning('    ! %s discerded', element.srcname)
-
-            SELECT.remove(element)
-            number_of_discarded_files += 1
+    number_of_discarded_files = index - len(SELECT)
 
     return number_of_discarded_files
 
@@ -3312,6 +3210,8 @@ def show_infos_about_target_path():
                               sourcedate))
         row_index += 1
 
+    db_connection.close()
+
     if row_index == 0:
         LOGGER.warning("    ! (empty database)")
         return 0
@@ -3342,8 +3242,6 @@ def show_infos_about_target_path():
                          ("source name", sourcename_maxlength, "|"),
                          ("source date", CST__DTIME_FORMAT_LENGTH, "|")),
                    data=rows_data)
-
-    db_connection.close()
 
     return 0
 
