@@ -215,6 +215,7 @@ CST__PARTIALHASHID_BYTESNBR = 1000000
 
 # string used to create the database :
 CST__SQL__CREATE_DB = ('CREATE TABLE dbfiles ('
+                       'db_index INTEGER PRIMARY KEY,'
                        'hashid TEXT , '
                        'partialhashid TEXT, '
                        'size INTEGER, '
@@ -817,7 +818,7 @@ class Filter:
                             ):
 
             try:
-                date = datetime.strptime(filter_date, time_format)
+                filter_date = datetime.strptime(filter_date, time_format).timestamp()
             except ValueError:
                 pass
             else:
@@ -828,18 +829,14 @@ class Filter:
 
 
         def return_match(name):
-            # ..................................................................
             # protection against the FileNotFoundError exception.
-            # This exception would be raised on broken symbolic link on the
-            #   "size = os.stat(normpath(fullname)).st_size" line (see below).
-            # ..................................................................
+            # This exception would be raised on broken symbolic link o
             if not os.path.exists(name):
                 return False
 
             # do not use utcfromtimestamp ; since time_format is given in local
             # tz, time must be also in local tz.
-            time = datetime.fromtimestamp(os.stat(name).st_mtime)
-            time = time.replace(second=0, microsecond=0)
+            time = os.stat(name).st_mtime
             return op(time, filter_date)
 
         return return_match
@@ -1028,9 +1025,6 @@ class Filter:
                 raise KatalError('"%i" not allowed in "name not already existing"'
                                  ' config key')
 
-            res = res.replace("%i",
-                            remove_illegal_characters(str(database_index)))
-
             return res not in list_names
 
     def test(self, file_name):
@@ -1105,17 +1099,18 @@ class Filter:
 
 # The order matter !
 # It should be exactly the same than the order of column in database
-SelectTuple = namedtuple('SELECTELEMENT', ["hashid",
+SelectTuple = namedtuple('SELECTELEMENT', ["db_index,"
+                                           "hashid",
                                            "partialhashid",
                                            "size",
                                            "targetname",
                                            "srcname",
                                            "time",
-                                           "targettags",
-                                           "database_index"])
+                                           "targettags",])
 class SelectElement(SelectTuple):
     """
     ATTRIBUTES
+        o db_index      : (int) number of the element in db
         o hashid        : (str) hashid of the file
         o partialhashid : (str) partial hashid of the file
         o size          : (int) size in bytes of the file
@@ -1123,7 +1118,6 @@ class SelectElement(SelectTuple):
         o srcname       : (str) full source name of the file, ready to be used by os.path
         o time          : (int) timestamp of last modification of the file
         o targettags    : (str) list of tags
-        o database_index: (int) number of the element in db
 
 
     """
@@ -1136,7 +1130,7 @@ class SelectElement(SelectTuple):
         data['size'] = os.stat(fullname).st_size
         data['time'] = os.stat(fullname).st_mtime
 
-        data['database_index'] = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
+        data['db_index'] = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
 
         data['partialhashid'] = hashfile64(filename=fullname,
                                            stop_after=CST__PARTIALHASHID_BYTESNBR),
@@ -1155,14 +1149,14 @@ class SelectElement(SelectTuple):
         data = {}
         data['srcname'] = db_row['sourcename']
         data['size'] = db_row['size']
-        data['database_index'] = db_row['rowid']
+        data['db_index'] = db_row['db_index']
 
         data['time'] = db_row['time']
 
         data['partialhashid'] = db_row['partialhashid']
         data['hashid'] = db_row['hashid']
 
-        data['targetname'] = db_row['name']
+        data['targetname'] = db_row['targetname']
         data['targettags'] = db_row['tagsstr']
 
         return super().__new__(**data)
@@ -1310,7 +1304,7 @@ class SelectElement(SelectTuple):
 
         res = res.replace("%t", str(int(data['time'])))
 
-        res = res.replace("%i", str(data['database_index']))
+        res = res.replace("%i", str(data['db_index']))
 
         return res
 
@@ -1398,13 +1392,13 @@ def action__add():
                             index, len_select, complete_source_filename, target_name)
                 shutil.move(complete_source_filename, target_name)
 
-        files_to_be_added.append(element[:7])
+        files_to_be_added.append(element[:8])
 
     LOGGER.info("    = all files have been copied, let's update the database...")
 
     try:
         if not ARGS.off:
-            db_cursor.executemany('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', files_to_be_added)
+            db_cursor.executemany('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?,?)', files_to_be_added)
 
     except sqlite3.IntegrityError as exception:
         LOGGER.error("!!! An error occured while writing the database : %s\n"
@@ -1816,7 +1810,7 @@ def action__rebase__write(new_db, files):
             LOGGER.info("      o tags        : \"%s\"", futurefile.targettags)
 
             if not ARGS.off:
-                newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?)', futurefile[:7])
+                newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?,?)', futurefile[:8])
 
         newdb_connection.commit()
 
@@ -2440,6 +2434,7 @@ def fill_select2():
             else:
                 # ok, let's add <filename> to SELECT...
                 SELECT.add(element)
+                targetname_set.add(element.targetname)
 
                 LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
                             prefix, fullname, len(SELECT))
