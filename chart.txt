@@ -15,7 +15,8 @@ main()
     |     |      | [checking the presence of all the parameters expected in the .ini file]
     |     | 
     |     | create_subdirs_in_target_path()
-    |     | 
+    |     |
+    |     | configure_loggers()
     |     | [...]welcome_in_logfile()
     |     |
     |     | if ARGS.infos:

@@ -18,8 +18,8 @@ echo "(04) ./katal/katal.py --new=faked/target --verbosity=none"
 ./katal/katal.py --new=faked/target --verbosity=none
 
 echo
-echo "(05) cp faked/katal.ini faked/target/.katal"
-cp faked/katal.ini.nocopy faked/target/.katal/katal.ini
+echo "(05) cp faked/katal.nocopy.ini faked/target/.katal/katal.ini"
+cp faked/katal.nocopy.ini faked/target/.katal/katal.ini
 
 echo
 echo "(06) cd faked/target"
