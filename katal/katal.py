@@ -54,6 +54,7 @@ import platform
 import re
 import shutil
 import sqlite3
+import subprocess
 import urllib.request
 import sys
 import unicodedata
@@ -773,8 +774,8 @@ class Filter:
         self.conditions['name'] = self.match_regex(regex)
         self.conditions['size'] = self.match_size(config.get('size'))
         self.conditions['date'] = self.match_date(config.get('date'))
-        self.conditions['name not existing'] = \
-            self.match_name_not_existing(config.get('name not existing'))
+        self.conditions['external program'] = \
+            self.match_external(config.get('external program'))
 
     def match_date(self, filter_date):
         """
@@ -939,93 +940,19 @@ class Filter:
 
         return return_match
 
-    def match_operator(self, op, filter2=None):
-        """
-        self.match_operator(op, filter2=None) -> test_function
-        ________________________________________________________________________
-
-        Test the boolean operation between self and filter2.
-        For example, self.match_operator(operator.and_, filter2)(file)
-            -> self(file) and filter2(file)
-        ________________________________________________________________________
-
-        PARAMETERS
-                o op : the boolean operation to make between filters (eg. operator.and)
-                o filter2: (Filter default=None) the second filter to do the operation
-
-        RETURNED VALUE
-                o function(file_name) : function which test if the file succeed
-                                        the condition on operations of Filters.
-                                        If op is evaluated to False,
-                                        always return True
-        """
-        if not op:
+    def match_external(self, filter_external):
+        if not filter_external:
             return lambda name: True
 
+        if '%s' not in filter_external:
+            filter_external += '%s'
+
         def return_match(name):
-            if filter2 is None:             # Negation is not a binary operator
-                return op(self(name))
-            else:
-                return op(self(name), filter2(name))
+            command = filter_external % name
+            out = subprocess.run(command.split(), timeout=True)
+            return not out.returncode
 
         return return_match
-
-    def match_name_not_existing(self, name_template=None):
-        """
-        self.match_name_not_existing(name_template) -> test_function
-        ________________________________________________________________________
-
-        Analyze the name_template and return a function which test if the
-        name_template modified accoding the file is already in the db.
-        ________________________________________________________________________
-
-        PARAMETERS
-                o filter_name_not_existing: (str) the string from config file
-                corresponding to the name_template to test
-
-        RETURNED VALUE
-                o function(file_name) : function which test if the file succeed
-                the condition
-                If filter_size is evaluated to False, always return True
-        """
-        if not name_template:
-            return lambda name: True
-
-        list_names = set(name for _, _, name in TARGET_DB.items())
-
-        def return_match(name):
-            res = name
-            size = os.stat(name).st_size
-            time = datetime.fromtimestamp(os.stat(name).st_mtime)
-            time = time.replace(second=0, microsecond=0)
-
-            basename, ext = get_filename_and_extension(os.path.basename(name))
-
-            # beware : order matters !
-            res = res.replace("%ht", hex(time.timestamp())[2:])
-            res = res.replace("%h", hashfile64(name))
-
-            res = res.replace("%ff", remove_illegal_characters(basename))
-            res = res.replace("%f", basename)
-
-            res = res.replace("%pp", remove_illegal_characters(os.path.dirname(name)))
-            res = res.replace("%p", os.path.dirname(name))
-
-            res = res.replace("%ee", remove_illegal_characters(ext))
-            res = res.replace("%e", ext)
-
-            res = res.replace("%s", str(size))
-
-            res = res.replace("%dd", remove_illegal_characters(
-                time.strftime(CST__DTIME_FORMAT)))
-
-            res = res.replace("%t", str(time.timestamp))
-
-            if '%i' in res:
-                raise KatalError('"%i" not allowed in "name not already existing"'
-                                 ' config key')
-
-            return res not in list_names
 
     def test(self, file_name):
         """
@@ -1048,11 +975,11 @@ class Filter:
         else:
             return True
 
-    def __call__(self, file_name):
+    def __call__(self, file_set):
         """
-        self(file_name) -> self.test(file_name)
+        self(file_set) -> set(file_name in file_set if self.test(file_name))
         """
-        return self.test(file_name)
+        return {file_name for file_name in file_set if self.test(file_name)}
 
     def __and__(self, filter2):
         """
@@ -1060,9 +987,7 @@ class Filter:
 
         (self & filter2)(file_name) <=> self(file_name) and filter2(file_name)
         """
-        f = Filter()
-        f.conditions['and'] = self.match_operator(operator.and_, filter2)
-        return f
+        return lambda file_set: self(file_set) & filter2(file_set)
 
     def __or__(self, filter2):
         """
@@ -1070,9 +995,7 @@ class Filter:
 
         (self | filter2)(file_name) <=> self(file_name) or² filter2(file_name)
         """
-        f = Filter()
-        f.conditions['or'] = self.match_operator(operator.or_, filter2)
-        return f
+        return lambda file_set: self(file_set) | filter2(file_set)
 
     def __xor__(self, filter2):
         """
@@ -1080,9 +1003,7 @@ class Filter:
 
         (self ^ filter2)(file_name) <=> self(file_name) xor filter2(file_name)
         """
-        f = Filter()
-        f.conditions['xor'] = self.match_operator(operator.xor, filter2)
-        return f
+        return lambda file_set: self(file_set) ^ filter2(file_set)
 
     def __invert__(self):
         """
@@ -1090,16 +1011,14 @@ class Filter:
 
         (~ self)(file_name) <=> not self(file_name)
         """
-        f = Filter()
-        f.conditions['not'] = self.match_operator(operator.not_)
-        return f
+        return lambda file_set: file_set - self(file_set)
 
 #///////////////////////////////////////////////////////////////////////////////
 
 
 # The order matter !
 # It should be exactly the same than the order of column in database
-SelectTuple = namedtuple('SELECTELEMENT', ["db_index,"
+SelectTuple = namedtuple('SELECTELEMENT', ["db_index",
                                            "hashid",
                                            "partialhashid",
                                            "size",
@@ -1142,7 +1061,7 @@ class SelectElement(SelectTuple):
                                           cls.create_target_name(data))
         data['targettags'] = cls.create_target_tags(data)
 
-        return super().__new__(**data)
+        return super().__new__(cls, **data)
 
     @classmethod
     def from_db_row(cls, db_row):
@@ -1161,7 +1080,8 @@ class SelectElement(SelectTuple):
 
         return super().__new__(**data)
 
-    def create_target_name(self, data):
+    @classmethod
+    def create_target_name(cls, data):
         """
             create_target_name()
             ________________________________________________________________________
@@ -1200,10 +1120,11 @@ class SelectElement(SelectTuple):
             RETURNED VALUE
                     (str)name
         """
-        return self.add_keywords_in_targetstr(CONFIG["target"]["name of the target files"], data)
+        return cls.add_keywords_in_targetstr(CONFIG["target"]["name of the target files"], data)
 
     #/////////////////////////////////////////////////////////////////////////////////////////
-    def create_target_tags(self, data):
+    @classmethod
+    def create_target_tags(cls, data):
         """
             create_target_tags()
             ________________________________________________________________________
@@ -1242,7 +1163,7 @@ class SelectElement(SelectTuple):
             RETURNED VALUE
                     (str)name
         """
-        return self.add_keywords_in_targetstr(CONFIG["target"]["tags"], data)
+        return cls.add_keywords_in_targetstr(CONFIG["target"]["tags"], data)
 
     @staticmethod
     def add_keywords_in_targetstr(srcstring, data):
@@ -1282,6 +1203,7 @@ class SelectElement(SelectTuple):
         """
         res = srcstring
 
+        filename = os.path.basename(data['srcname'])
         filename_no_extens, extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
         # beware : order matters !
         res = res.replace("%ht", hex(int(data['time']))[2:])
@@ -1291,8 +1213,8 @@ class SelectElement(SelectTuple):
         res = res.replace("%ff", remove_illegal_characters(filename_no_extens))
         res = res.replace("%f", filename_no_extens)
 
-        res = res.replace("%pp", remove_illegal_characters(data['path']))
-        res = res.replace("%p", data['path'])
+        res = res.replace("%pp", remove_illegal_characters(data['srcname']))
+        res = res.replace("%p", data['srcname'])
 
         res = res.replace("%ee", remove_illegal_characters(extension))
         res = res.replace("%e", extension)
@@ -1957,7 +1879,7 @@ def action__select():
     LOGGER.info("  o file list :")
 
     # let's initialize SELECT and SELECT_SIZE_IN_BYTES :
-    number_of_discarded_files = fill_select2()
+    number_of_discarded_files = fill_select()
 
     LOGGER.info("    o size of the selected file(s) : %s", size_as_str(SELECT_SIZE_IN_BYTES))
 
@@ -2367,7 +2289,7 @@ def eval_filters(filters):
                                                                               exception))
 
 #///////////////////////////////////////////////////////////////////////////////
-def fill_select2():
+def fill_select():
     """
         fill_select()
         ________________________________________________________________________
@@ -2385,66 +2307,87 @@ def fill_select2():
     """
     global SELECT_SIZE_IN_BYTES
 
-    source_path = normpath(CFG_PARAMETERS["source"]["path"])
-    targetname_set = set()
-
-    for index, fullname in (os.path.join(dirpath, filename)
-                            for dirpath, _, filenames in os.walk(source_path)
-                            for filename in filenames):
+    def prefix(index):
         # if we know the total amount of files to be selected (see the --infos option),
         # we can add the percentage done :
         if INFOS_ABOUT_SRC_PATH[1]:
-            prefix = "[{0:.4f}%] ".format(file_index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
+            return "[{0:.4f}%] ".format(index / INFOS_ABOUT_SRC_PATH[1] * 100.0)
         else:
-            prefix = ""
+            return ""
 
-        # protection against the FileNotFoundError exception.
-        # This exception would be raised on broken symbolic link
-        if not os.path.exists(fullname):
-            LOGGER.warning("    ! %sbrowsing %s, an error occured : "
-                            "can't read the file \"%s\"", source_path, fullname)
+    index = 0
 
-        elif not FILTER(fullname):
-            # ... nothing : incompatibility with at least one filter :
-            LOGGER.debug("    - %sdiscarded \"%s\" : incompatibility with the filter(s)",
-                            prefix, fullname)
+    source_path = normpath(CFG_PARAMETERS["source"]["path"])
+
+    # (1) find all source files
+    name_set = {os.path.join(dirpath, filename)
+                for dirpath, _, filenames in os.walk(source_path)
+                for filename in filenames}
+
+    # (2) Check all source files really defined
+    # protection against the FileNotFoundError exception.
+    # This exception would be raised on broken symbolic link
+    file_not_existing = {filename for filename in name_set if not os.path.exists(filename)}
+    for filename in file_not_existing:
+        index += 1
+        LOGGER.warning("    ! %sbrowsing %s, an error occured : "
+                    "can't read the file \"%s\"", prefix(index), source_path, fullname)
+
+    name_set.difference_update(file_not_existing)
+
+    # (3) Filter files
+    filtered_files = FILTER(name_set)
+    for filename in name_set - filtered_files:
+        # nothing : incompatibility with at least one filter :
+        index += 1
+        LOGGER.debug("    - %sdiscarded \"%s\" : incompatibility with the filter(s)",
+                    prefix(index), fullname)
+
+    # (4) Transform the file in an element object
+    filtered_elements = {SelectElement(filename) for filename in filtered_files}
+
+    # (5) Check element not already definided in TARGET_DB
+    for element in filtered_elements & TARGET_DB:
+        index += 1
+        # element already defined in db : let's discard <filename> :
+        LOGGER.debug("    - %s(similar hashid in the database) "
+                    " discarded \"%s\"", prefix(index), element.targetname)
+
+    filtered_elements.difference_update(TARGET_DB)
+
+    # (6) Check target name not already existing
+    name_already_exists = {element for element in filtered_elements
+                           if os.path.exists(element.targetname)}
+    if name_already_exists:
+        for element.targetname in name_already_exists:
+            LOGGER.error('    ! Two files ave as target "%s". Aborting',
+                         element.targetname)
+        raise KatalError('Find targetnames which will be unique')
+
+    # (7) Check no targetname used twice
+    dest_names = set()
+    abort = False
+    for element in filtered_elements:
+        if element.targetname in dest_names:
+            LOGGER.error('    ! Name "%s" used by "%s" already existing. Aborting',
+                            element.targetname, element.srcname)
+            abort = True
         else:
-            element = SelectElement(fullname)
-            # 'filename' being compatible with the filters, let's try
-            # to add it in the datase :
-            if element in SELECT:
-                # tobeadded is True but element is already in SELECT;
-                # let's discard it
-                number_of_discarded_files += 1
-                LOGGER.debug("    - %s(similar hashid among the files to be copied, "
-                                "in the source directory) discarded \"%s\"",
-                                prefix, fullname)
-
-            elif element in TARGET_DB:
-                # element already defined in db : let's discard <filename> :
-                number_of_discarded_files += 1
-                LOGGER.debug("    - %s(similar hashid in the database) "
-                                " discarded \"%s\"", prefix, fullname)
-
-            elif element.targetname in targetname_set or os.path.exists(element.targetname):
-                logger.error('    ! %sTwo files exist for "%s". Aborting',
-                             prefix, element.targetname)
-                raise KatalError('   Find targetnames which will be unique')
-
-            else:
-                # ok, let's add <filename> to SELECT...
-                SELECT.add(element)
-                targetname_set.add(element.targetname)
-
-                LOGGER.info("    + %s selected \"%s\" (file selected #%s)",
-                            prefix, fullname, len(SELECT))
-                LOGGER.info("       size=%s; date=%s",
-                            element.size, element.date)
+            dest_names.add(element.targetname)
+    if abort:
+        raise KatalError('Find targetnames which will be unique')
 
 
+    # (8)ok, let's add <filename> to SELECT...
+    for element in filtered_elements:
+        index += 1
+        LOGGER.info("    + %s selected \"%s\", size=%s; date=%s",
+                    prefix(index), element.targetname, element.size, element.date)
+
+    SELECT.update(filterd_elements)
 
     SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT)
-    number_of_discarded_files = index - len(SELECT)
+    number_of_discarded_files = len(name_set) - len(SELECT)
 
     return number_of_discarded_files
 
@@ -2826,8 +2769,7 @@ def main_warmup(timestamp_start):
 
     #...........................................................................
     # we show the following informations :
-    for path, info in ((CONFIG.cfg_files, "config file"),
-                       (os.path.join(normpath(ARGS.targetpath),
+    for path, info in ((os.path.join(normpath(ARGS.targetpath),
                                      CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR), "trash subdir"),
                        (os.path.join(normpath(ARGS.targetpath),
                                      CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR), "tasks subdir"),
