@@ -40,12 +40,10 @@ import argparse
 from base64 import b64encode
 from collections import namedtuple
 import configparser
-import ctypes
 import hashlib
 from datetime import datetime
 import filecmp
 from fnmatch import fnmatch
-import itertools
 import logging
 from logging.handlers import RotatingFileHandler
 import operator
@@ -57,7 +55,6 @@ import sqlite3
 import subprocess
 import urllib.request
 import sys
-import unicodedata
 
 #===============================================================================
 # project's settings
@@ -322,6 +319,14 @@ class Config(configparser.ConfigParser):
         super().__init__(interpolation=None)
 
     def read_config(self, args=None):
+        """
+        self.read_config(self, args=None)
+        ________________________________________________________________________
+
+        Read all the config from the different sources (default values, default
+        config files, command line)
+        """
+
         self.read_command_line_arguments(args)
 
         # TODO: download configfile
@@ -378,6 +383,7 @@ class Config(configparser.ConfigParser):
 
 #///////////////////////////////////////////////////////////////////////////////
     def default_config(self):
+        """self.default_config() -> dict of default config"""
         return {
         'source': {
             'path': '.',
@@ -849,7 +855,7 @@ class Filter:
         ________________________________________________________________________
 
         Analyze the parameter filter_regex and return a function which test if
-        the basename of the file match the regex
+        the basename of the file match the regex.
         ________________________________________________________________________
 
         PARAMETERS
@@ -920,7 +926,7 @@ class Filter:
         else:
             if not filter_size[-1].isdigit():
                 raise KatalError("Can't analyse {0} in the filter. "
-                                "Available multiples are : {1}".format(filter_size,
+                                 "Available multiples are : {1}".format(filter_size,
                                                                         CST__MULTIPLES))
         try:
             match_size = float(filter_size) * multiple
@@ -942,6 +948,24 @@ class Filter:
         return return_match
 
     def match_external(self, filter_external):
+        """
+        self.match_external(filter_external) -> test_function
+        ________________________________________________________________________
+
+        Return a funcion which run filter_external as a command with '%s'
+        substitued by the file name. If the return code of the command is 0, the
+        file is accepted.
+        ________________________________________________________________________
+
+        PARAMETERS
+                o filter_external : (str) a command
+
+        RETURNED VALUE
+                o function(file_name) : function which test if the file succeed
+                                        the test run by filter_external
+                                        If the return code is 0, return True,
+                                        else return False
+        """
         if not filter_external:
             return lambda name: True
 
@@ -970,8 +994,8 @@ class Filter:
                               if not test(file_name)]
 
         if list_tests_failled:
-            LOGGER.info('  o The following tests failed for filter "{}" and file "{}": '
-                        '{}'.format(self.name, file_name, list_tests_failled))
+            LOGGER.info('  o The following tests failed for filter "%s" and file "%s": '
+                        '%s', self.name, file_name, list_tests_failled)
             return False
         else:
             return True
@@ -1046,7 +1070,6 @@ class SelectElement(SelectTuple):
 
         data = {}
         data['srcname'] = fullname
-        filename = os.path.basename(fullname)
         data['size'] = os.stat(fullname).st_size
         data['time'] = os.stat(fullname).st_mtime
 
@@ -1066,6 +1089,19 @@ class SelectElement(SelectTuple):
 
     @classmethod
     def from_db_row(cls, db_row):
+        """
+        SelectElement.from_db_row(db_row) -> SelectElement
+        _______________________________________________________________________
+
+        Create a SelectElement from a row of the database
+        _______________________________________________________________________
+
+        PARAMETERS
+                o db_row (Row): a row of the database
+
+        RETURNED VALUE
+                o the SelectElement corresponding
+        """
         data = {}
         data['srcname'] = db_row['sourcename']
         data['size'] = db_row['size']
@@ -1084,39 +1120,25 @@ class SelectElement(SelectTuple):
     @classmethod
     def create_target_name(cls, data):
         """
-            create_target_name()
+            Selectelement.create_target_name(data)
             ________________________________________________________________________
 
             Create the name of a file (a target file) from various informations
-            given by the parameters. The function reads the string stored in
+            given by the parameter. The function reads the string stored in
             parameters["target"]["name of the target files"] and replaces some
             keywords in the string by the parameters given to this function.
 
             see the available keywords in the documentation.
                 (see documentation:configuration file)
-
-            caveat : in the .ini files, '%' have to be written twice (as in
-                    '%%p', e.g.) but Python reads it as if only one % was
-                    written.
             ________________________________________________________________________
 
             PARAMETERS
-                    o parameters                   : an object returned by
-                                                    read_parameters_from_cfgfile(),
-                                                    like CFG_PARAMETERS
-                    o hashid                       : (str)
-                    o filename_no_extens           : (str)
-                    o path                         : (str
-                    o extension                    : (str)
-                    o _size                        : (int)
-                    o date                         : (str) see CST__DTIME_FORMAT
-                    o database_index               : (int)
-
-            About the underscore before "_size" :
-            confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-            " If a function argument's name clashes with a reserved keyword, it is generally
-            " better to append a single trailing underscore rather than use an abbreviation
-            " or spelling corruption.
+                    o data : (dict) must contain the following items
+                        o hashid                       : (str)
+                        o srcname                      : (str)
+                        o time                         : (int)
+                        o size                         : (int)
+                        o db_index                     : (int)
 
             RETURNED VALUE
                     (str)name
@@ -1127,39 +1149,25 @@ class SelectElement(SelectTuple):
     @classmethod
     def create_target_tags(cls, data):
         """
-            create_target_tags()
+            SelectElement.create_target_tags(data)
             ________________________________________________________________________
 
             Create the tags of a file (a target file) from various informations
-            given by the parameters. The function reads the string stored in
+            given by the parameter. The function reads the string stored in
             parameters["target"]["tags"] and replaces some
             keywords in the string by the parameters given to this function.
 
             see the available keywords in the documentation.
                 (see documentation:configuration file)
-
-            caveat : in the .ini files, '%' have to be written twice (as in
-                    '%%p', e.g.) but Python reads it as if only one % was
-                    written.
             ________________________________________________________________________
 
             PARAMETERS
-                    o parameters                   : an object returned by
-                                                    read_parameters_from_cfgfile(),
-                                                    like CFG_PARAMETERS
-                    o hashid                       : (str)
-                    o filename_no_extens           : (str)
-                    o path                         : (str
-                    o extension                    : (str)
-                    o _size                        : (int)
-                    o date                         : (str) see CST__DTIME_FORMAT
-                    o database_index               : (int)
-
-            About the underscore before "_size" :
-            confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-            " If a function argument's name clashes with a reserved keyword, it is generally
-            " better to append a single trailing underscore rather than use an abbreviation
-            " or spelling corruption.
+                    o data : (dict) must contain the following items
+                        o hashid                       : (str)
+                        o srcname                      : (str)
+                        o time                         : (int)
+                        o size                         : (int)
+                        o db_index                     : (int)
 
             RETURNED VALUE
                     (str)name
@@ -1181,23 +1189,13 @@ class SelectElement(SelectTuple):
             ________________________________________________________________________
 
             PARAMETERS
-                    o srcstring                    : (str)
-                    o hashid                       : (str)
-                    o filename_no_extens           : (str)
-                    o path                         : (str
-                    o extensiont : in the .ini files, '%' have to be written twice (as in
-                                    '%%p', e.g.) but Python reads it as if only one % was
-                                                    written.
-                                                    : (str)
-                    o _size                        : (int)
-                    o date                         : (str) see CST__DTIME_FORMAT
-                    o database_index               : (int)
-
-            About the underscore before "_size" :
-            confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-            " If a function argument's name clashes with a reserved keyword, it is generally
-            " better to append a single trailing underscore rather than use an abbreviation
-            " or spelling corruption.
+                    o srcstring                        : (str)
+                    o data : (dict) must contain the following items
+                        o hashid                       : (str)
+                        o srcname                      : (str)
+                        o time                         : (int)
+                        o size                         : (int)
+                        o db_index                     : (int)
 
             RETURNED VALUE
                     (str)the expected string
@@ -1237,17 +1235,27 @@ class SelectElement(SelectTuple):
     def date(self):
         return datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
     def __eq__(self, other):
+        """
+        self.__eq__(other) -> self == other
+        _______________________________________________________________________
+
+        Test if two SelectElement are equal. The comparison is based on hashid,
+        and if 'strict comparison' is True, on a bit-to-it comparison
+        """
         if self.hashid != other.hashid:
             return False
         elif self.partialhashid != other.partialhashid:
             return False
         else:
-            # We have to do a bit-to-bit comparison
+            if CONFIG['strict comparison']:
+                # We have to do a bit-to-bit comparison
 
-            # Protection if only srcname or targetname exists
-            self_filename = self.srcname if os.path.exists(self.srcname) else self.targetname
-            other_filename = other.srcname if os.path.exists(other.srcname) else other.targetname
-            return filecmp.cmp(self_filename, other_fullname, shallow=False)
+                # Protection if only srcname or targetname exists
+                self_filename = self.srcname if os.path.exists(self.srcname) else self.targetname
+                other_filename = other.srcname if os.path.exists(other.srcname) else other.targetname
+                return filecmp.cmp(self_filename, other_filename, shallow=False)
+            else:
+                return True
 
     def __hash__(self):
         return hash(self.hashid)
@@ -1983,7 +1991,7 @@ def action__target_kill(filename):
                                      CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR, filename))
 
             # let's remove filename from the database :
-            db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (element.targetname,))
+            db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (filename,))
 
             res = 0  # success.
 
@@ -2336,7 +2344,7 @@ def fill_select():
     for filename in file_not_existing:
         index += 1
         LOGGER.warning("    ! %sbrowsing %s, an error occured : "
-                    "can't read the file \"%s\"", prefix(index), source_path, fullname)
+                       "can't read the file \"%s\"", prefix(index), source_path, filename)
 
     name_set.difference_update(file_not_existing)
 
@@ -2346,7 +2354,7 @@ def fill_select():
         # nothing : incompatibility with at least one filter :
         index += 1
         LOGGER.debug("    - %sdiscarded \"%s\" : incompatibility with the filter(s)",
-                    prefix(index), fullname)
+                     prefix(index), filename)
 
     # (4) Transform the file in an element object
     filtered_elements = {SelectElement(filename) for filename in filtered_files}
@@ -2356,7 +2364,7 @@ def fill_select():
         index += 1
         # element already defined in db : let's discard <filename> :
         LOGGER.debug("    - %s(similar hashid in the database) "
-                    " discarded \"%s\"", prefix(index), element.targetname)
+                     "discarded \"%s\"", prefix(index), element.targetname)
 
     filtered_elements.difference_update(TARGET_DB)
 
@@ -2364,9 +2372,9 @@ def fill_select():
     name_already_exists = {element for element in filtered_elements
                            if os.path.exists(element.targetname)}
     if name_already_exists:
-        for element.targetname in name_already_exists:
+        for targetname in name_already_exists:
             LOGGER.error('    ! Two files ave as target "%s". Aborting',
-                         element.targetname)
+                         targetname)
         raise KatalError('Find targetnames which will be unique')
 
     # (7) Check no targetname used twice
@@ -2375,7 +2383,7 @@ def fill_select():
     for element in filtered_elements:
         if element.targetname in dest_names:
             LOGGER.error('    ! Name "%s" used by "%s" already existing. Aborting',
-                            element.targetname, element.srcname)
+                         element.targetname, element.srcname)
             abort = True
         else:
             dest_names.add(element.targetname)
@@ -2935,14 +2943,15 @@ def read_target_db2():
         read_target_db()
         ________________________________________________________________________
 
-        Read the database stored in the target directory and initialize
-        TARGET_DB.
+        Read the database stored in the target directory and returned a set of
+        SelectElement from the database.
         ________________________________________________________________________
 
         no PARAMETER,
 
         RETURNED VALUE
-            target_db
+                o target_db : (set) SelectElement objects corresponding to the
+                rows of the database
     """
     if not os.path.exists(normpath(get_database_fullname())):
         create_empty_db(normpath(get_database_fullname()))
@@ -3251,6 +3260,20 @@ def tagsstr_repr(tagsstr):
 
 #///////////////////////////////////////////////////////////////////////////////
 def walk_hidden(path):
+    """
+    walk_hidden(path) -> generator
+    ___________________________________________________________________________
+
+    Like os.walk(path), but hide the hidden files if 'read hidden files' is False.
+    ___________________________________________________________________________
+
+    PARAMETER
+            o path : (str) the path from which to walk
+
+    RETURNED VALUES
+            o (dirpath, dirnames, dirfiles) : see os.walk()
+    """
+
     read_hidden = CONFIG.getboolean('source', 'read hidden files')
     for dirpath, dirnames, dirfiles in os.walk(path):
         if read_hidden or not '/.' in dirpath:
