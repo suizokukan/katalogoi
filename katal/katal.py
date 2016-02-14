@@ -979,6 +979,7 @@ class Filter:
 
         return return_match
 
+
     def test(self, file_name):
         """
         self.test(file_name) -> check if the file succed to all conditions"
@@ -1174,8 +1175,8 @@ class SelectElement(SelectTuple):
         """
         return cls.add_keywords_in_targetstr(CONFIG["target"]["tags"], data)
 
-    @staticmethod
-    def add_keywords_in_targetstr(srcstring, data):
+    @classmethod
+    def add_keywords_in_targetstr(cls, srcstring, data):
         """
             add_keywords_in_targetstr()
             ________________________________________________________________________
@@ -1202,9 +1203,33 @@ class SelectElement(SelectTuple):
         """
         res = srcstring
 
+        # to don't have to compile the regex every time
+        date_regex = getattr(cls, 'date_regex',
+                            re.compile(r"%d\((.*?)\)")) # Match '%d(format)'
+        ddate_regex = getattr(cls, 'ddate_regex',
+                            re.compile(r"%dd\((.*?)\)")) # Match '%d(format)'
+
+        cls.date_regex = date_regex
+        cls.ddate_regex = ddate_regex
+
+        def date_sub(match):
+            return date.strftime(match.group(1))
+        def ddate_sub(match):
+            return remove_illegal_characters(date.strftime(match.group(1)))
+
         filename = os.path.basename(data['srcname'])
         filename_no_extens, extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
         # beware : order matters !
+        res = date_regex.sub(date_sub, res)
+        res = ddate_regex.sub(ddate_sub, res)
+
+        res = res.replace("%Y", date.strftime("%Y"))
+        res = res.replace("%m", date.strftime("%m"))
+        res = res.replace("%d", date.strftime("%d"))
+
+        res = res.replace("%nn", remove_illegal_characters(filename))
+        res = res.replace("%n", filename)
+
         res = res.replace("%ht", hex(int(data['time']))[2:])
 
         res = res.replace("%h", data['hashid'])
@@ -1289,11 +1314,11 @@ def action__add():
 
         RETURNED VALUE
                 (int) 0 if success, -1 if an error occured.
+                                                                                  add_keywords_in_targetstr.ddate_regex = ddate_regex
+
+                                                                                      def date_sub(f an error occured.
     """
     LOGGER.info("  = copying data =")
-
-    db_connection = sqlite3.connect(get_database_fullname())
-    db_cursor = db_connection.cursor()
 
     if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
         LOGGER.warning("    ! Not enough space on disk. Stopping the program.")
@@ -1325,19 +1350,25 @@ def action__add():
                 # moving the file :
                 LOGGER.info("    ... (%s/%s) about to " "move \"%s\" to \"%s\" .",
                             index, len_select, complete_source_filename, target_name)
+                # shutil.move preserve metadata
                 shutil.move(complete_source_filename, target_name)
 
         files_to_be_added.append(element[:8])
 
     LOGGER.info("    = all files have been copied, let's update the database...")
 
+    db_connection = sqlite3.connect(get_database_fullname())
+    db_cursor = db_connection.cursor()
+
     try:
         if not ARGS.off:
             db_cursor.executemany('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?,?)', files_to_be_added)
 
     except sqlite3.IntegrityError as exception:
-        LOGGER.error("!!! An error occured while writing the database : %s\n"
-                     "!!! files to be added", str(exception))
+        db_connection.close()
+
+        LOGGER.exception("!!! An error occured while writing the database : ")
+        LOGGER.error("!!! Files to be added :")
         for file_to_be_added in files_to_be_added:
             LOGGER.error("     ! hashid=%s; partialhashid=%s; size=%s; name=%s; sourcename=%s; "
                          "sourcedate=%s; tagsstr=%s", *file_to_be_added)
@@ -2311,9 +2342,7 @@ def fill_select():
         the source path. This function is used by action__select() .
         ________________________________________________________________________
 
-        PARAMETERS
-                o debug_datatime : None (normal value) or a dict of CST__DTIME_FORMAT
-                                   strings if in debug/test mode.
+        no PARAMETERS
 
         RETURNED VALUE
                 (int) the number of discarded files
@@ -2389,7 +2418,6 @@ def fill_select():
             dest_names.add(element.targetname)
     if abort:
         raise KatalError('Find targetnames which will be unique')
-
 
     # (8)ok, let's add <filename> to SELECT...
     for element in filtered_elements:
@@ -2656,7 +2684,7 @@ def main_actions():
                       "(\"{1}\") ? (y/N) ".format(CFG_PARAMETERS["target"]["mode"],
                                                   ARGS.targetpath))
 
-            if answer in ("y", "yes"):
+            if answer in ("y", "yes", "Y"):
                 action__add()
                 show_infos_about_target_path()
 
