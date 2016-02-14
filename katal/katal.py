@@ -383,6 +383,7 @@ class Config(configparser.ConfigParser):
             'path': '.',
             'eval': '*',
             'strict comparison': False,
+            'read hidden files': False,
         },
         'target': {
             'mode': 'copy',
@@ -1234,7 +1235,7 @@ class SelectElement(SelectTuple):
 
     @property
     def date(self):
-        return datetime.fromtimestamp(self.time).strptime(CST__DTIME_FORMAT)
+        return datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
     def __eq__(self, other):
         if self.hashid != other.hashid:
             return False
@@ -1242,7 +1243,11 @@ class SelectElement(SelectTuple):
             return False
         else:
             # We have to do a bit-to-bit comparison
-            return filecmp.cmp(self.filename, other.fullname, shallow=False)
+
+            # Protection if only srcname or targetname exists
+            self_filename = self.srcname if os.path.exists(self.srcname) else self.targetname
+            other_filename = other.srcname if os.path.exists(other.srcname) else other.targetname
+            return filecmp.cmp(self_filename, other_fullname, shallow=False)
 
     def __hash__(self):
         return hash(self.hashid)
@@ -2033,7 +2038,7 @@ def action__whatabout(src):
             LOGGER.warning("  ! error : the given directory is inside the target directory.")
             return False
 
-        for dirpath, _, filenames in os.walk(normpath(src)):
+        for dirpath, _, filenames in walk_hidden(normsrc):
             for filename in filenames:
                 fullname = os.path.join(normpath(dirpath), filename)
                 show_infos_about_a_srcfile(fullname)
@@ -2321,7 +2326,7 @@ def fill_select():
 
     # (1) find all source files
     name_set = {os.path.join(dirpath, filename)
-                for dirpath, _, filenames in os.walk(source_path)
+                for dirpath, _, filenames in walk_hidden(source_path)
                 for filename in filenames}
 
     # (2) Check all source files really defined
@@ -2384,7 +2389,7 @@ def fill_select():
         LOGGER.info("    + %s selected \"%s\", size=%s; date=%s",
                     prefix(index), element.targetname, element.size, element.date)
 
-    SELECT.update(filterd_elements)
+    SELECT.update(filtered_elements)
 
     SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT)
     number_of_discarded_files = len(name_set) - len(SELECT)
@@ -3035,7 +3040,7 @@ def show_infos_about_source_path():
     files_number = 0
     files_number_interval = 0   # used to display the intermediate number, see below.
     extensions = dict()  # (str)extension : [number of files, total size]
-    for dirpath, _, fnames in os.walk(normpath(source_path)):
+    for dirpath, _, fnames in walk_hidden(normpath(source_path)):
         for filename in fnames:
             fullname = os.path.join(normpath(dirpath), filename)
 
@@ -3245,6 +3250,17 @@ def tagsstr_repr(tagsstr):
     return ', '.join(s.strip() for s in tagsstr.split(CST__TAG_SEPARATOR) if s)
 
 #///////////////////////////////////////////////////////////////////////////////
+def walk_hidden(path):
+    read_hidden = CONFIG.getboolean('source', 'read hidden files')
+    for dirpath, dirnames, dirfiles in os.walk(path):
+        if read_hidden or not '/.' in dirpath:
+            dirnames = [name for name in dirnames
+                        if read_hidden or not name.startswith('.')]
+            dirfiles = [name for name in dirfiles
+                        if read_hidden or not name.startswith('.')]
+            print(dirpath, dirnames, dirfiles)
+            yield (dirpath, dirnames, dirfiles)
+
 def welcome(timestamp_start):
     """
         welcome()
