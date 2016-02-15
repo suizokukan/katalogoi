@@ -1057,10 +1057,10 @@ class SelectElement(SelectTuple):
         data['size'] = os.stat(fullname).st_size
         data['time'] = os.stat(fullname).st_mtime
 
-        data['db_index'] = len(TARGET_DB) + len(SELECT) # TODO: ensure this is correct
+        data['db_index'] = cls.get_increase_db_index()
 
         data['partialhashid'] = hashfile64(filename=fullname,
-                                           stop_after=CST__PARTIALHASHID_BYTESNBR),
+                                           stop_after=CST__PARTIALHASHID_BYTESNBR)
         data['hashid'] = hashfile64(filename=fullname)
 
         if targetpath is None:
@@ -1070,6 +1070,23 @@ class SelectElement(SelectTuple):
         data['targettags'] = cls.create_target_tags(data)
 
         return super().__new__(cls, **data)
+
+    @classmethod
+    def get_increase_db_index(cls):
+        """
+        cls.get_increase_db_index() -> db_index
+        """
+        if not hasattr(cls, '_db_index'):
+            con = sqlite3.Connection(get_database_fullname())
+            c = con.execute('SELECT COUNT(*) FROM dbfiles')
+            db_index = int(c.fetchone()[0])
+            con.close()
+
+            cls._db_index = db_index
+
+        cls._db_index += 1
+        return cls._db_index
+
 
     @classmethod
     def from_db_row(cls, db_row):
@@ -1316,20 +1333,12 @@ def action__add():
         target path.
         ________________________________________________________________________
 
-        no PARAMETER
-
-        RETURNED VALUE
-                (int) 0 if success, -1 if an error occured.
-                                                                                  add_keywords_in_targetstr.ddate_regex = ddate_regex
-
-                                                                                      def date_sub(f an error occured.
+        no PARAMETER, no RETURNED VALUE
     """
     LOGGER.info("  = copying data =")
 
     if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
-        LOGGER.warning("    ! Not enough space on disk. Stopping the program.")
-        # returned value : -1 = error
-        return -1
+        raise KatalError("    ! Not enough space on disk. Stopping the program.")
 
     files_to_be_added = []
     len_select = len(SELECT)
@@ -1359,6 +1368,9 @@ def action__add():
                 # shutil.move preserve metadata
                 shutil.move(complete_source_filename, target_name)
 
+            else:
+                raise KatalError('Mode {} not valid'.format(CONFIG["target"]["mode"]))
+
         files_to_be_added.append(element[:8])
 
     LOGGER.info("    = all files have been copied, let's update the database...")
@@ -1378,15 +1390,12 @@ def action__add():
         for file_to_be_added in files_to_be_added:
             LOGGER.error("     ! hashid=%s; partialhashid=%s; size=%s; name=%s; sourcename=%s; "
                          "sourcedate=%s; tagsstr=%s", *file_to_be_added)
-        raise KatalError("An error occured while writing the database : " + str(exception))
+        raise KatalError("An error occured while writing the database.")
 
     db_connection.commit()
     db_connection.close()
 
     LOGGER.info("    = ... database updated.")
-
-    # returned value : 0 = success
-    return 0
 
 #///////////////////////////////////////////////////////////////////////////////
 def action__addtag(tag, dest):
@@ -2198,6 +2207,8 @@ def create_empty_db(db_name):
     LOGGER.info("  ... creating an empty database named \"%s\"...", db_name)
 
     if not ARGS.off:
+        if not os.path.isdir(os.path.dirname(db_name)):
+            create_subdirs_in_target_path()
 
         db_connection = sqlite3.connect(db_name)
         db_cursor = db_connection.cursor()
@@ -2223,22 +2234,20 @@ def create_subdirs_in_target_path():
         no PARAMETERS, no RETURNED VALUE
     """
     # (str)name for the message, (str)full path :
-    for name, \
-        fullpath in (("target", ARGS.targetpath),
-                     ("system", os.path.join(normpath(ARGS.targetpath),
-                                             CST__KATALSYS_SUBDIR)),
-                     ("trash", os.path.join(normpath(ARGS.targetpath),
-                                            CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR)),
-                     ("log", os.path.join(normpath(ARGS.targetpath),
-                                          CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR)),
-                     ("tasks", os.path.join(normpath(ARGS.targetpath),
-                                            CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))):
-        if not os.path.exists(normpath(fullpath)) and not ARGS.off:
-            print("  * Since the {0} path \"{1}\" (path : \"{2}\") "
-                  "doesn't exist, let's create it.".format(name,
-                                                           fullpath,
-                                                           normpath(fullpath)))
-            os.mkdir(normpath(fullpath))
+    for name, fullpath in \
+            (("target", normpath(ARGS.targetpath)),
+            ("system", os.path.join(normpath(ARGS.targetpath),
+                                    CST__KATALSYS_SUBDIR)),
+            ("trash", os.path.join(normpath(ARGS.targetpath),
+                                   CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR)),
+            ("log", os.path.join(normpath(ARGS.targetpath),
+                                 CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR)),
+            ("tasks", os.path.join(normpath(ARGS.targetpath),
+                                   CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))):
+        if not os.path.exists(fullpath) and not ARGS.off:
+            LOGGER.info('  * Since the %s path "%s" '
+                        "doesn't exist, let's create it.", name, fullpath)
+            os.mkdir(fullpath)
 
 #/////////////////////////////////////////////////////////////////////////////////////////
 def draw_table(rows, data):
@@ -2407,9 +2416,9 @@ def fill_select():
     name_already_exists = {element for element in filtered_elements
                            if os.path.exists(element.targetname)}
     if name_already_exists:
-        for targetname in name_already_exists:
-            LOGGER.error('    ! Two files ave as target "%s". Aborting',
-                         targetname)
+        for element in name_already_exists:
+            LOGGER.error('    ! Two files saved as target "%s". Aborting',
+                         element.targetname)
         raise KatalError('Find targetnames which will be unique')
 
     # (7) Check no targetname used twice
@@ -2445,7 +2454,7 @@ def get_database_fullname():
         ________________________________________________________________________
 
           Return the full name (=full path + name) of the database in
-        ARGS.targetpath .
+        ARGS.targetpath. If the database does not exist, create it.
         ________________________________________________________________________
 
         NO PARAMETER
@@ -2453,7 +2462,13 @@ def get_database_fullname():
         RETURNED VALUE
                 the expected string
     """
-    return os.path.join(normpath(ARGS.targetpath), CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
+    database_fullname = os.path.join(normpath(ARGS.targetpath),
+                                     CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
+
+    if not os.path.exists(database_fullname):
+        create_empty_db(database_fullname)
+
+    return database_fullname
 
 #///////////////////////////////////////////////////////////////////////////////
 def get_disk_free_space(path):
@@ -2947,7 +2962,7 @@ def read_filters():
     FILTER = eval_filters(filters)
 
 #///////////////////////////////////////////////////////////////////////////////
-def read_target_db():
+def read_target_db(database=None):
     """
         read_target_db()
         ________________________________________________________________________
@@ -2958,10 +2973,10 @@ def read_target_db():
 
         no PARAMETER, no RETURNED VALUE
     """
-    if not os.path.exists(normpath(get_database_fullname())):
-        create_empty_db(normpath(get_database_fullname()))
+    if database is None:
+        database = get_database_fullname()
 
-    db_connection = sqlite3.connect(get_database_fullname())
+    db_connection = sqlite3.connect(database)
     db_connection.row_factory = sqlite3.Row
     db_cursor = db_connection.cursor()
 
@@ -2971,7 +2986,7 @@ def read_target_db():
     db_connection.close()
 
 #/////////////////////////////////////////////////////////////////////////////////////////
-def read_target_db2():
+def read_target_db2(database=None):
     """
         read_target_db()
         ________________________________________________________________________
@@ -2986,10 +3001,10 @@ def read_target_db2():
                 o target_db : (set) SelectElement objects corresponding to the
                 rows of the database
     """
-    if not os.path.exists(normpath(get_database_fullname())):
-        create_empty_db(normpath(get_database_fullname()))
+    if database is None:
+        database = get_database_fullname()
 
-    db_connection = sqlite3.connect(get_database_fullname())
+    db_connection = sqlite3.connect(database)
     db_connection.row_factory = sqlite3.Row
     db_cursor = db_connection.cursor()
 
@@ -3306,7 +3321,6 @@ def walk_hidden(path):
     RETURNED VALUES
             o (dirpath, dirnames, dirfiles) : see os.walk()
     """
-
     read_hidden = CONFIG.getboolean('source', 'read hidden files')
     for dirpath, dirnames, dirfiles in os.walk(path):
         if read_hidden or not '/.' in dirpath:
