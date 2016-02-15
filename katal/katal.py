@@ -78,28 +78,6 @@ __status__ = "Beta"
 __statuspypi__ = 'Development Status :: 5 - Production/Stable'
 
 #===============================================================================
-# global variables
-#===============================================================================
-
-ARGS = None  # parameters given on the command line; initialized by main();
-
-CFG_PARAMETERS = None  # see documentation:configuration file
-                       # parameters read from the configuration file.
-                       # see the read_parameters_from_cfgfile() function
-
-CONFIG = None # centralize all config (command line + configuration file)
-              # see Config()
-
-INFOS_ABOUT_SRC_PATH = (None, None, None)  # initialized by show_infos_about_source_path()
-                                           # ((int)total_size, (int)files_number, (dict)extensions)
-
-TARGET_DB = set()      # see documentation:database; initialized by read_target_db()
-
-SELECT = set()               # see documentation:selection; initialized by action__select()
-SELECT_SIZE_IN_BYTES = 0  # initialized by action__select()
-FILTER = None             # see documentation:selection; initialized by read_filters()
-
-#===============================================================================
 # loggers
 #===============================================================================
 def extra_logger(custom_parameters):
@@ -318,20 +296,20 @@ class Config(configparser.ConfigParser):
     def __init__(self):
         super().__init__(interpolation=None)
 
-    def read_config(self, args=None):
+    def read_config(self, args=None, cfg_file=None):
         """
-        self.read_config(self, args=None)
+        self.read_config(self, args=None, cfg_file=None)
         ________________________________________________________________________
 
         Read all the config from the different sources (default values, default
-        config files, command line)
+        config files, command line, cfg_file if provided)
         """
 
         self.read_command_line_arguments(args)
 
         # TODO: download configfile
         self.read_dict(self.default_config())    # Initialize the defaults value
-        self.read_all_config_files()
+        self.read_all_config_files(cfg_file)
         self.read_dict(self.arguments_to_dict()) # Modifications from command line
 
         self.read_parameters_from_cfgfile()
@@ -414,7 +392,8 @@ class Config(configparser.ConfigParser):
         'tags': {}
     }
 
-    def read_all_config_files(self):
+    def read_all_config_files(self, cfg_file=None):
+        # Order matter
         config_files = self.possible_paths_to_cfg()
 
         cfg_files = self.read(config_files)
@@ -428,6 +407,10 @@ class Config(configparser.ConfigParser):
                 print('  ! The config file "%s" (path : "%s") '
                     " doesn't exist. " % self.configfile, normpath(self.configfile))
                 raise ConfigError
+
+        if cfg_file:
+            self.read(cfg_file)
+            cfg_files.append(cfg_file)
 
         if not cfg_files:
             print('  ! No config file has been found, ')
@@ -813,7 +796,7 @@ class Filter:
                               ('<' , operator.lt),
                               ('=' , operator.eq)):
             if filter_date.startswith(condition):
-                filter_date = filter_date[(len(condition)):]
+                filter_date = filter_date[(len(condition)):].strip()
                 break
         else:
             raise KatalError("Can't analyse a 'date' field : " + filter_date)
@@ -827,10 +810,9 @@ class Filter:
 
             try:
                 filter_date = datetime.strptime(filter_date, time_format).timestamp()
+                break
             except ValueError:
                 pass
-            else:
-                break
         else:
             raise KatalError("Can't analyse the 'date' field {}, see "
                              "configuration example for correct format".format(filter_date))
@@ -970,15 +952,16 @@ class Filter:
             return lambda name: True
 
         if '%s' not in filter_external:
-            filter_external += '%s'
+            filter_external += ' %s'
 
         def return_match(name):
             command = filter_external % name
             out = subprocess.run(command.split(), timeout=True)
+            LOGGER.error(command)
+            LOGGER.error(out.returncode)
             return not out.returncode
 
         return return_match
-
 
     def test(self, file_name):
         """
@@ -1208,21 +1191,22 @@ class SelectElement(SelectTuple):
                             re.compile(r"%d\((.*?)\)")) # Match '%d(format)'
         ddate_regex = getattr(cls, 'ddate_regex',
                             re.compile(r"%dd\((.*?)\)")) # Match '%d(format)'
-
         cls.date_regex = date_regex
         cls.ddate_regex = ddate_regex
+
+        filename = os.path.basename(data['srcname'])
+        filename_no_extens, extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
+
+        date = datetime.fromtimestamp(data['time'])
 
         def date_sub(match):
             return date.strftime(match.group(1))
         def ddate_sub(match):
             return remove_illegal_characters(date.strftime(match.group(1)))
 
-        filename = os.path.basename(data['srcname'])
-        filename_no_extens, extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
         # beware : order matters !
         res = date_regex.sub(date_sub, res)
         res = ddate_regex.sub(ddate_sub, res)
-
         res = res.replace("%Y", date.strftime("%Y"))
         res = res.replace("%m", date.strftime("%m"))
         res = res.replace("%d", date.strftime("%d"))
@@ -1272,7 +1256,7 @@ class SelectElement(SelectTuple):
         elif self.partialhashid != other.partialhashid:
             return False
         else:
-            if CONFIG['strict comparison']:
+            if CONFIG.getboolean('source', 'strict comparison'):
                 # We have to do a bit-to-bit comparison
 
                 # Protection if only srcname or targetname exists
@@ -1284,6 +1268,28 @@ class SelectElement(SelectTuple):
 
     def __hash__(self):
         return hash(self.hashid)
+
+#===============================================================================
+# global variables
+#===============================================================================
+
+CFG_PARAMETERS = None  # see documentation:configuration file
+                       # parameters read from the configuration file.
+                       # see the read_parameters_from_cfgfile() function
+
+CONFIG = Config() # centralize all config (command line + configuration file)
+                  # see Config()
+
+ARGS = CONFIG     # parameters given on the command line; initialized by main();
+
+INFOS_ABOUT_SRC_PATH = (None, None, None)  # initialized by show_infos_about_source_path()
+                                           # ((int)total_size, (int)files_number, (dict)extensions)
+
+TARGET_DB = set()      # see documentation:database; initialized by read_target_db()
+
+SELECT = set()               # see documentation:selection; initialized by action__select()
+SELECT_SIZE_IN_BYTES = 0  # initialized by action__select()
+FILTER = None             # see documentation:selection; initialized by read_filters()
 
 
 class KatalError(BaseException):
@@ -2347,7 +2353,7 @@ def fill_select():
         RETURNED VALUE
                 (int) the number of discarded files
     """
-    global SELECT_SIZE_IN_BYTES
+    global SELECT_SIZE_IN_BYTES, SELECT
 
     def prefix(index):
         # if we know the total amount of files to be selected (see the --infos option),
@@ -2425,7 +2431,7 @@ def fill_select():
         LOGGER.info("    + %s selected \"%s\", size=%s; date=%s",
                     prefix(index), element.targetname, element.size, element.date)
 
-    SELECT.update(filtered_elements)
+    SELECT = filtered_elements
 
     SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT)
     number_of_discarded_files = len(name_set) - len(SELECT)
@@ -2628,7 +2634,6 @@ def main(args=None):
     timestamp_start = datetime.now()
 
     try:
-        CONFIG = Config()
         ARGS = CONFIG.read_command_line_arguments(args)
 
         main_warmup(timestamp_start)
@@ -2907,7 +2912,7 @@ def normpath(path):
 
         RETURNED VALUE : the expected strinc
     """
-    res = os.path.normpath(os.path.abspath(os.path.expanduser(path)))
+    res = os.path.normpath(os.path.abspath(os.path.expanduser(str(path))))
 
     if ARGS.usentfsprefix:
         res = res.replace("\\\\?\\", "")
@@ -3309,7 +3314,6 @@ def walk_hidden(path):
                         if read_hidden or not name.startswith('.')]
             dirfiles = [name for name in dirfiles
                         if read_hidden or not name.startswith('.')]
-            print(dirpath, dirnames, dirfiles)
             yield (dirpath, dirnames, dirfiles)
 
 def welcome(timestamp_start):
