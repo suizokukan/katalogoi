@@ -56,6 +56,7 @@ import subprocess
 import urllib.request
 import sys
 
+
 #===============================================================================
 # project's settings
 #
@@ -77,6 +78,14 @@ __email__ = "suizokukan @T orange D@T fr"
 __status__ = "Beta"
 __statuspypi__ = 'Development Status :: 5 - Production/Stable'
 
+
+try:
+    from xdg.BaseDirectory import load_first_config
+except ImportError:
+    XDG_CONFIG = ''
+else:
+    XDG_CONFIG = load_first_config(__projectname__)
+
 #===============================================================================
 # loggers
 #===============================================================================
@@ -84,8 +93,9 @@ def extra_logger(custom_parameters):
     """"
         extraLogger(custom_parameters)
         ________________________________________________________________________
+
         Mainly for syntax sugar.
-        R
+
         It let to write logger.info(msg, color='blue') rather than
         logger.info(msg, extra={'color': 'blue'})
         ________________________________________________________________________
@@ -126,19 +136,6 @@ LOGFILE_SIZE = 0                         # size of the current logfile.
 # type(s)
 #===============================================================================
 
-# SELECT is made of SELECTELEMENT objects, where data about the original files
-# are stored.
-#
-# Due to Pylint's requirements, we can't name this type SelectElement.
-SELECTELEMENT = namedtuple('SELECTELEMENT', ["fullname",
-                                             "partialhashid",
-                                             "path",
-                                             "filename_no_extens",
-                                             "extension",
-                                             "size",
-                                             "date",
-                                             "targetname",
-                                             "targettags",])
 
 #===============================================================================
 # global constants : CST__*
@@ -208,13 +205,6 @@ CST__TRASH_SUBSUBDIR = "trash"
 
 # 'Linux', 'Windows', 'Java' according to https://docs.python.org/3.5/library/platform.html
 CST__PLATFORM = platform.system()
-
-try:
-    from xdg.BaseDirectory import load_first_config
-except ImportError:
-    CST__XDG_CONFIG = ''
-else:
-    CST__XDG_CONFIG = load_first_config(__projectname__)
 
 ################################################################################
 class KatalError(Exception):
@@ -391,6 +381,10 @@ class Config(configparser.ConfigParser):
         },
         'tags': {}
     }
+
+    @property
+    def normtargetpath(self):
+        return normpath(self.targetpath)
 
     def read_all_config_files(self, cfg_file=None):
         # Order matter
@@ -629,8 +623,8 @@ class Config(configparser.ConfigParser):
         res = []
 
         res.append(os.path.join(normpath("~"), ".katal"))
-        if CST__XDG_CONFIG:
-            res.append(CST__XDG_CONFIG)
+        if XDG_CONFIG:
+            res.append(XDG_CONFIG)
 
         if CST__PLATFORM == 'Windows':
             res.append(os.path.join(normpath("~"),
@@ -1048,7 +1042,7 @@ class SelectElement(SelectTuple):
 
 
     """
-    def __new__(cls, fullname, targetpath=None, config=None):
+    def __new__(cls, fullname, config=None, srcpath=None, targetpath=None):
         fullname = normpath(fullname)
 
         data = {}
@@ -1063,12 +1057,15 @@ class SelectElement(SelectTuple):
         data['hashid'] = hashfile64(filename=fullname)
 
         if targetpath is None:
-            targetpath = ARGS.targetpath
-        data['targetname'] = os.path.join(normpath(targetpath),
-                                          cls.create_target_name(data, config))
+            targetpath = CONFIG.normtargetpath
+
+        data['targetpath'] = targetpath
+        data['srcpath'] = srcpath if srcpath is not None else normpath(CONFIG["source"]["path"])
+
+        data['targetname'] = os.path.join(targetpath, cls.create_target_name(data, config))
         data['targettags'] = cls.create_target_tags(data, config)
 
-        return super().__new__(cls, **data)
+        return super().__new__(cls, **{k: v for k, v in data.items() if k in cls._fields})
 
     @classmethod
     def get_increase_db_index(cls):
@@ -1213,8 +1210,9 @@ class SelectElement(SelectTuple):
         cls.date_regex = date_regex
         cls.ddate_regex = ddate_regex
 
-        filename = os.path.basename(data['srcname'])
+        filename = os.path.relpath(data['srcname'], start=data['srcpath'])
         filename_no_extens, extension = get_filename_and_extension(filename) #TODO Put get_filename... as e method ?
+        relative_directory = os.path.dirname(filename)
 
         date = datetime.fromtimestamp(data['time'])
 
@@ -1233,8 +1231,10 @@ class SelectElement(SelectTuple):
         res = res.replace("%nn", remove_illegal_characters(filename))
         res = res.replace("%n", filename)
 
-        res = res.replace("%ht", hex(int(data['time']))[2:])
+        res = res.replace("%rr", remove_illegal_characters(relative_directory))
+        res = res.replace("%r", relative_directory)
 
+        res = res.replace("%ht", hex(int(data['time']))[2:])
         res = res.replace("%h", data['hashid'])
 
         res = res.replace("%ff", remove_illegal_characters(filename_no_extens))
@@ -1248,8 +1248,7 @@ class SelectElement(SelectTuple):
 
         res = res.replace("%s", str(data['size']))
 
-        res = res.replace("%dd", remove_illegal_characters(
-            datetime.fromtimestamp(data['time']).strftime(CST__DTIME_FORMAT)))
+        res = res.replace("%dd", remove_illegal_characters(date.strftime(CST__DTIME_FORMAT)))
 
         res = res.replace("%t", str(int(data['time'])))
 
@@ -1311,21 +1310,6 @@ SELECT_SIZE_IN_BYTES = 0  # initialized by action__select()
 FILTER = None             # see documentation:selection; initialized by read_filters()
 
 
-class KatalError(BaseException):
-    """
-        KatalError class
-
-        A very basic class called when an error is raised by the program.
-    """
-    #///////////////////////////////////////////////////////////////////////////
-    def __init__(self, value):
-        BaseException.__init__(self)
-        self.value = value
-    #///////////////////////////////////////////////////////////////////////////
-    def __str__(self):
-        return repr(self.value)
-
-#///////////////////////////////////////////////////////////////////////////////
 def action__add():
     """
         action__add()
@@ -1372,7 +1356,7 @@ def action__add():
                             index, len_select, mode, source_filename, target_name)
 
                 if not ARGS.off:
-                    shutil.copy2(source_filename, target_name)
+                    copy(source_filename, target_name)
 
             else:
                 raise KatalError('Mode {} not valid'.format(mode))
@@ -1566,7 +1550,7 @@ def action__findtag(tag):
             LOGGER.info("    o (%s/%s) copying \"%s\" as \"%s\"...",
                         i, len_res, src, dest)
             if not ARGS.off:
-                shutil.copy2(src, dest)
+                copy(src, dest)
 
     return res
 
@@ -1599,7 +1583,7 @@ def action__new(targetname):
 
         no PARAMETER, no RETURNED VALUE
     """
-    LOGGER.warning("  = about to create a new target directory "
+    LOGGER.info("  = about to create a new target directory "
                    "named \"%s\" (path : \"%s\")", targetname, normpath(targetname))
 
     targetname = normpath(targetname)
@@ -1610,7 +1594,7 @@ def action__new(targetname):
         raise FileExistsError
 
     if not ARGS.off:
-        LOGGER.warning("  ... creating the target directory with its sub-directories...")
+        LOGGER.info("  ... creating the target directory with its sub-directories...")
         create_empty_db(targetname)
 
     if ARGS.verbosity != 'none':
@@ -1716,8 +1700,6 @@ def action__rebase__files(newtargetpath, dest_params):
                                          (4)size,
                                          (5)partialhashid)
     """
-    source_path = CFG_PARAMETERS["source"]["path"]
-
     files = set()       # set to be returned.
     filenames = set()   # to be used to avoid duplicates.
 
@@ -1725,7 +1707,8 @@ def action__rebase__files(newtargetpath, dest_params):
     for old_element in read_target_db2():
         fullname = old_element.targetname
 
-        new_element = SelectElement(fullname, targetpath=newtargetpath, config=dest_params)
+        new_element = SelectElement(fullname, srcpath=CONFIG.normtargetpath,
+                                    targetpath=newtargetpath, config=dest_params)
         new_name = new_element.targetname
 
         LOGGER.info("      o %s : %s would be copied as %s",
@@ -1792,7 +1775,7 @@ def action__rebase__write(new_db, files):
             LOGGER.info("    o (%s/%s) copying \"%s\" as \"%s\"",
                         index, len(files), old_name, new_name)
             if not ARGS.off:
-                shutil.copy2(old_name, new_name)
+                copy(old_name, new_name)
 
     except sqlite3.IntegrityError as exception:
         newdb_connection.rollback()
@@ -1886,7 +1869,7 @@ def action__rmnotags():
                 LOGGER.info("   o removing %s from the database and from the target path", name)
                 if not ARGS.off:
                     # let's remove the file from the target directory :
-                    shutil.copy2(name,target)
+                    copy(name,target)
 
                     # let's remove the file from the database :
                     db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
@@ -2210,6 +2193,22 @@ def clean(list_path):
             if os.path.isfile(path):
                 os.remove(path)
 
+def copy(src, dst):
+    """
+    copy(src, dst)
+    ___________________________________________________________________________
+
+    Copy file from src to dst and create parent directory if needed
+    """
+    try:
+        shutil.copy2(src, dst)
+    except FileNotFoundError as e:
+        if not os.path.exists(os.path.dirname(dst)):
+            os.makedirs(os.path.dirname(dst))
+            shutil.copy2(src, dst)
+        else:
+            # The exception has been raised for something else
+            raise
 def create_empty_db(targetpath=None):
     """
         create_empty_db()
@@ -2534,7 +2533,7 @@ def get_filename_and_extension(path):
                 (str)filename without extension, (str)the extension without the
                 initial dot.
     """
-    fname_no_extens, extension = os.path.splitext(path)
+    fname_no_extens, extension = os.path.splitext(os.path.basename(path))
 
     # the extension can't begin with a dot.
     if extension.startswith("."):

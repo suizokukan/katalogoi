@@ -48,6 +48,17 @@ def src_dir(tmpdir):
     return src_dir
 
 @pytest.fixture
+def src_dir_subdir(tmpdir):
+    src_dir = tmpdir.mkdir('source')
+
+    populate(src_dir, 'A/a.1', size=1024**2)
+    populate(src_dir, 'A/b.2', time='2016-01-24 12:34')
+    populate(src_dir, 'B/c.3', time='2016-01-24 13:02')
+    populate(src_dir, 'd.4')
+
+    return src_dir
+
+@pytest.fixture
 def target_dir(tmpdir):
     """
     Like src_dir, but scope is not session.
@@ -82,7 +93,7 @@ def conf():
     return conf
 
 def read_db(config, target=None):
-    katal.ARGS = katal.CONF = katal.CFG_PARAMETERS = config
+    katal.ARGS = katal.CONFIG = katal.CFG_PARAMETERS = config
     name = katal.get_database_fullname(target)
 
     con = sqlite3.Connection(name)
@@ -96,6 +107,8 @@ def read_db(config, target=None):
 
 def populate(path, name, time=None, size=0):
     p = path.join(name)
+    if not os.path.exists(p.dirname):
+        os.makedirs(p.dirname)
     # Random, else every file has the same hashid
     with p.open('w') as f:
         f.seek(size)
@@ -226,6 +239,7 @@ def test_copy(src_dir, target_dir, conf):
     katal.fill_select()
     katal.action__add()
 
+    # Test if the db has been created
     assert target_dir.join(katal.CST__KATALSYS_SUBDIR, katal.CST__DATABASE_NAME).isfile()
 
     list_target_files = []
@@ -282,7 +296,6 @@ def test_move(src_dir, target_dir, conf):
     assert list_hashid == {katal.hashfile64(f) for f in list_target_names}
 
 def test_rebase(src_dir, target_dir, new_target_dir, conf):
-
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {},
                     'target': {'name of the target files': '%n', 'tags': '', 'mode': 'copy'}})
@@ -324,4 +337,60 @@ def test_rebase(src_dir, target_dir, new_target_dir, conf):
 
     assert list_src_names == {target_dir.join(f) for f in ('a.1', 'b.2', 'c.3', 'd.4')}
     assert list_target_names == {new_target_dir.join(f) for f in ('2016-a.1', '2016-b.2', '2016-c.3', '2016-d.4')}
+    assert list_hashid == {katal.hashfile64(f) for f in list_target_names}
+def test_rebase_subdir(src_dir_subdir, target_dir, new_target_dir, conf):
+    conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir_subdir)},
+                    'source.filter1': {},
+                    'target': {'name of the target files': '%n', 'tags': '', 'mode': 'copy'}})
+
+    conf.targetpath = str(target_dir)
+
+    katal.read_target_db()
+    katal.read_filters()
+    katal.fill_select()
+    katal.action__add()
+
+    # Test if the db has been created
+    assert target_dir.join(katal.CST__KATALSYS_SUBDIR, katal.CST__DATABASE_NAME).isfile()
+
+    list_target_files = []
+    for dirpath, _, filenames in os.walk(str(target_dir)):
+        list_target_files.extend(os.path.join(dirpath, f) for f in filenames if '.katal' not in dirpath)
+
+    assert set(list_target_files) == {(target_dir.join(f)) for f in ('A/a.1', 'A/b.2', 'B/c.3', 'd.4')}
+
+
+    #.............................
+    # Rebase
+
+    # Filling the db
+    katal.action__new(str(new_target_dir))
+
+    # Warning : deep copy is not possible. So when modifying target,
+    # config['target'] is modified too.
+    new_conf = copy.copy(conf)
+    new_conf.read_dict({'target': {'name of the target files': '%Y/%r/%f'}})
+
+    files, anomalies =  katal.action__rebase__files(str(new_target_dir), new_conf)
+    assert not anomalies
+
+    new_db = katal.get_database_fullname(str(new_target_dir))
+
+    katal.action__rebase__write(str(new_db), files)
+
+    assert new_target_dir.join(katal.CST__KATALSYS_SUBDIR, katal.CST__DATABASE_NAME).isfile()
+
+    list_target_files = []
+    for dirpath, _, filenames in os.walk(str(new_target_dir)):
+        list_target_files.extend(os.path.join(dirpath, f) for f in filenames
+                                 if '.katal' not in dirpath)
+
+    assert set(list_target_files) == {(new_target_dir.join(f)) for f in ('2016/A/a', '2016/A/b', '2016/B/c', '2016/d')}
+
+    db = read_db(conf, str(new_target_dir))
+    list_src_names = {row['sourcename'] for row in db}
+    list_target_names = {row['targetname'] for row in db}
+    list_hashid = {row['hashid'] for row in db}
+
+    assert list_src_names == {target_dir.join(f) for f in ('A/a.1', 'A/b.2', 'B/c.3', 'd.4')}
     assert list_hashid == {katal.hashfile64(f) for f in list_target_names}
