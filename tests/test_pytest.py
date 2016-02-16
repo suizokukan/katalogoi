@@ -118,9 +118,6 @@ def populate(path, name, time=None, size=0):
         time = datetime.strptime(time, '%Y-%m-%d %H:%M').timestamp()
         os.utime(str(p), (time, time))
 
-def pwd_path(filename):
-    return os.path.join(os.path.abspath(os.path.curdir), filename)
-
 
 def initialization(src_dir):
     args = '-cfg tests/cfgfile1.ini'.split()
@@ -139,29 +136,32 @@ def initialization(src_dir):
 
     assert path.join(katal.get_logfile_fullname()).ensure()
 
-def test_select1(src_dir, conf):
+def test_select1(src_dir, target_dir, conf):
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'name': '.*'},
                     'target': {'name of the target files': '%fs.%e', 'tags': ''}})
+    conf.targetpath = str(target_dir)
 
     katal.read_filters()
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('a.1', 'b.2', 'c.3', 'd.4')}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('as.1', 'bs.2', 'cs.3', 'ds.4')}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('as.1', 'bs.2', 'cs.3', 'ds.4')}
 
-def test_select2(src_dir, conf):
+def test_select2(src_dir, target_dir, conf):
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'name': '.*2$'},
                     'target': {'name of the target files': '%ne', 'tags': ''}})
+    conf.targetpath = str(target_dir)
 
     katal.read_filters()
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('b.2',)}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('b.2e',)}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('b.2e',)}
 
-def test_select3(src_dir, conf):
+def test_select3(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'size': '<=1kB'},
                     'target': {'name of the target files': '%n', 'tags': ''}})
@@ -170,9 +170,10 @@ def test_select3(src_dir, conf):
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('b.2', 'c.3', 'd.4')}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('b.2', 'c.3', 'd.4')}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('b.2', 'c.3', 'd.4')}
 
-def test_select3(src_dir, conf):
+def test_select3(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'size': '<=1kB', 'date': '>=2016-01-24 13:00'},
                     'target': {'name of the target files': '%n', 'tags': ''}})
@@ -181,9 +182,10 @@ def test_select3(src_dir, conf):
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('c.3', 'd.4')}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('c.3', 'd.4')}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('c.3', 'd.4')}
 
-def test_select4(src_dir, conf):
+def test_select4(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'size': '<=1kB', 'date': '>=2016-02'},
                     'target': {'name of the target files': '%n', 'tags': ''}})
@@ -192,9 +194,10 @@ def test_select4(src_dir, conf):
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('d.4',)}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('d.4',)}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('d.4',)}
 
-def test_select5(src_dir, conf):
+def test_select5(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'date': '<=2016-02'},
                     'target': {'name of the target files': '%Y-%d(%m)-%f', 'tags': ''}})
@@ -203,9 +206,10 @@ def test_select5(src_dir, conf):
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('b.2', 'c.3')}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('2016-01-b', '2016-01-c')}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('2016-01-b', '2016-01-c')}
 
-def test_select6(src_dir, conf):
+def test_select6(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {'external program': 'false'},
                     'target': {'name of the target files': '%n', 'tags': ''}})
@@ -216,7 +220,8 @@ def test_select6(src_dir, conf):
     assert {e.srcname for e in katal.SELECT} == set()
     assert {e.targetname for e in katal.SELECT} == set()
 
-def test_subdir1(src_dir, conf):
+def test_subdir1(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},
                     'source.filter1': {},
                     'target': {'name of the target files': '%Y/%n', 'tags': ''}})
@@ -225,7 +230,7 @@ def test_subdir1(src_dir, conf):
     katal.fill_select()
 
     assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('a.1', 'b.2', 'c.3', 'd.4')}
-    assert {e.targetname for e in katal.SELECT} == {pwd_path(f) for f in ('2016/a.1', '2016/b.2', '2016/c.3', '2016/d.4')}
+    assert {e.targetname for e in katal.SELECT} == {target_dir.join(f) for f in ('2016/a.1', '2016/b.2', '2016/c.3', '2016/d.4')}
 
 def test_copy(src_dir, target_dir, conf):
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},

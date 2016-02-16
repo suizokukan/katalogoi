@@ -297,7 +297,13 @@ class Config(configparser.ConfigParser):
 
         self.read_command_line_arguments(args)
 
-        # TODO: download configfile
+        if self.downloaddefaultcfg is not None:
+            if self.downloaddefaultcfg == 'local':
+                targetname = self.normtargetpath
+            else:
+                targetname = XDG_CONFIG or normpath('~')
+            downloaddefaultcfg(targetname)
+
         self.read_dict(self.default_config())    # Initialize the defaults value
         self.read_all_config_files(cfg_file)
         self.read_dict(self.arguments_to_dict()) # Modifications from command line
@@ -425,8 +431,22 @@ class Config(configparser.ConfigParser):
 
         if not cfg_files:
             print('  ! No config file has been found, ')
-            print("    Use the -dlcfg/--downloaddefaultcfg option "
-                  "to download a default config file.")
+            res = False
+
+            if self['display']['verbosity'] != "none":
+                answer = \
+                    input(("\nDo you want to download the default config file "
+                        "into the target directory ? (y/N) "))
+
+                if answer in ("y", "yes"):
+                    res = downloaddefaultcfg(self.normtargetpath)
+
+            if not res:
+                LOGGER.warning("  ! A problem occurred : "
+                               "the creation of the target directory has been aborted.")
+
+                print("    Use the -dlcfg/--downloaddefaultcfg option "
+                      "to download a default config file.")
             raise ConfigError
 
     def read_command_line_arguments(self, args=None):
@@ -1464,55 +1484,6 @@ def action__cleandbrm():
                     "file(s) from the database", len(files_to_be_rmved_from_the_db))
 
 #///////////////////////////////////////////////////////////////////////////////
-def action__downloadefaultcfg(targetname=CST__DEFAULT_CONFIGFILE_NAME, location="local"):
-    """
-        action__downloadefaultcfg()
-        ________________________________________________________________________
-
-        Download the default configuration file; save it in the current directory
-        (location='local') or in the user's HOME directory (location='home').
-
-        No log messages for this function, everything is printed to the console.
-        ________________________________________________________________________
-
-        PARAMETERS :
-            o (str) targetname : the new name of the downloaded file
-            o (str) location : "local" or "home"
-
-        RETURNED VALUE :
-            (bool) success
-    """
-    print("  = downloading the default configuration file...")
-    print("    ... trying to download %s from %s", targetname, CST__DEFAULTCFGFILE_URL)
-
-    try:
-        if not ARGS.off:
-            with urllib.request.urlopen(CST__DEFAULTCFGFILE_URL) as response, \
-                 open(targetname, 'wb') as out_file:
-                shutil.copyfileobj(response, out_file)
-        print("  * download completed : \"{0}\" (path : \"{1}\")".format(targetname,
-                                                                         normpath(targetname)))
-
-        if location == 'home':
-            newname = os.path.join(possible_paths_to_cfg()[-1],
-                                   os.path.basename(targetname))
-            print("  * Since you wrote '--downloaddefaultcfg=home', "
-                  "let's move the download file to the user's home directory...")
-            print("    namely {0} -> {1}".format(targetname, newname))
-            shutil.move(targetname, newname)
-
-        return True
-
-    except urllib.error.URLError as exception:
-        print("  ! An error occurred : {0}\n"
-              "  ... if you can't download the default config file, what about simply\n"
-              "  ... copy another config file to the target directory ?\n"
-              "  ... In a target directory, the config file is \n"
-              "in the \"{1}\" directory.".format(exception,
-                                                 os.path.join(CST__KATALSYS_SUBDIR)))
-        return False
-
-#///////////////////////////////////////////////////////////////////////////////
 def action__findtag(tag):
     """
         action__findtag()
@@ -1614,20 +1585,18 @@ def action__new(targetname):
         LOGGER.info("  ... creating the target directory with its sub-directories...")
         create_empty_db(targetname)
 
-    if ARGS.verbosity != 'none':
+    if CONFIG['diaplay']['verbosity'] != 'none':
         answer = \
             input(("\nDo you want to download the default config file "
                    "into the expected directory ? (y/N) "))
 
         if answer in ("y", "yes"):
-            res = action__downloadefaultcfg(
-                os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__DEFAULT_CONFIGFILE_NAME),
-                "local")
+            res = downloaddefaultcfg(targetname)
             if not res:
                 LOGGER.warning("  ! A problem occurred : "
                                "the creation of the target directory has been aborted.")
 
-    LOGGER.warning("  ... done with the creation of \"%s\" as a new target directory.", targetname)
+    LOGGER.warning('  ... done with the creation of "%s" as a new target directory.', targetname)
 
 #///////////////////////////////////////////////////////////////////////////////
 def action__rebase(newtargetpath):
@@ -1825,7 +1794,7 @@ def action__reset():
     """
     LOGGER.info("    = about to delete (=move in the trash) the target files and the database.")
 
-    if ARGS.verbosity != 'none':
+    if CONFIG['diaplay']['verbosity'] != 'none':
         answer = \
             input(("\nDo you really want to delete (=move to the katal trash directory)"
                    "the files in the target directory and the database (y/N) "))
@@ -2153,11 +2122,11 @@ def configure_loggers():
             formatter1 = logging.Formatter('%(levelname)s::%(asctime)s::  %(message)s')
             handler1.setFormatter(formatter1)
 
-            if ARGS.verbosity == 'none':
+            if CONFIG['diaplay']['verbosity'] == 'none':
                 handler1.setLevel(logging.INFO) # To keep a record of what is done
-            elif ARGS.verbosity == 'normal':
+            elif CONFIG['diaplay']['verbosity'] == 'nomal':
                 handler1.setLevel(logging.INFO)
-            elif ARGS.verbosity == 'high':
+            elif CONFIG['diaplay']['verbosity'] == 'high':
                 handler1.setLevel(logging.DEBUG)
 
             LOGGER.addHandler(handler1)
@@ -2177,11 +2146,11 @@ def configure_loggers():
     handler2 = logging.StreamHandler()
     handler2.setFormatter(formatter2)
 
-    if ARGS.verbosity == 'none':
-        handler2.setLevel(logging.ERROR)
-    elif ARGS.verbosity == 'normal':
+    if CONFIG['diaplay']['verbosity'] == 'none':
+        handler2.setLevel(logging.ERROR) # To keep a record of what is done
+    elif CONFIG['diaplay']['verbosity'] == 'nomal':
         handler2.setLevel(logging.INFO)
-    elif ARGS.verbosity == 'high':
+    elif CONFIG['diaplay']['verbosity'] == 'high':
         handler2.setLevel(logging.DEBUG)
 
     LOGGER.addHandler(handler2)
@@ -2251,7 +2220,7 @@ def create_empty_db(targetpath=None):
 
     if not ARGS.off:
         if not os.path.isdir(os.path.dirname(db_name)):
-            create_subdirs_in_target_path(targetpath)
+            create_subdirs(targetpath)
 
         db_connection = sqlite3.connect(db_name)
         db_cursor = db_connection.cursor()
@@ -2264,9 +2233,9 @@ def create_empty_db(targetpath=None):
     LOGGER.info("   ... database created")
 
 #///////////////////////////////////////////////////////////////////////////////
-def create_subdirs_in_target_path(targetpath=None):
+def create_subdirs(targetpath=None):
     """
-        create_subdirs_in_target_path()
+        create_subdirs()
         ________________________________________________________________________
 
         Create the expected subdirectories in ARGS.targetpath .
@@ -2295,6 +2264,51 @@ def create_subdirs_in_target_path(targetpath=None):
             os.mkdir(fullpath)
 
 #/////////////////////////////////////////////////////////////////////////////////////////
+def downloaddefaultcfg(targetpath):
+    """
+    downloaddefaulttcfg()
+    ________________________________________________________________________
+
+    Download the default configuration file; save it in the current directory
+    (location='local') or in the user's HOME directory (location='home').
+
+    No log messages for this function, everything is printed to the console.
+    ________________________________________________________________________
+
+    PARAMETERS :
+        o (str) targetname : the new name of the downloaded file
+        o (str) location : "local" or "home"
+
+    RETURNED VALUE :
+        (bool) success
+    """
+    print("  = downloading the default configuration file...")
+
+    try:
+        if not ARGS.off:
+            with urllib.request.urlopen(CST__DEFAULTCFGFILE_URL) as response:
+                create_subdirs(targetpath)
+                targetname = os.path.join(targetpath, CST__KATALSYS_SUBDIR, CST__DEFAULT_CONFIGFILE_NAME)
+                print("    ... trying to download %s from %s", targetname, CST__DEFAULTCFGFILE_URL)
+
+                with open(targetname, 'wb') as out_file:
+                    shutil.copyfileobj(response, out_file)
+        print("  * download completed : \"{0}\" (path : \"{1}\")".format(targetname,
+                                                                        normpath(targetname)))
+
+    except urllib.error.URLError as exception:
+        print("  ! An error occurred : {0}\n"
+            "  ... if you can't download the default config file, what about simply\n"
+            "  ... copy another config file to the target directory ?\n"
+            "  ... In a target directory, the config file is \n"
+            "in the \"{1}\" directory.".format(exception,
+                                                os.path.join(CST__KATALSYS_SUBDIR)))
+        return False
+
+    else:
+        return True
+
+#///////////////////////////////////////////////////////////////////////////////
 def draw_table(rows, data):
     """
         draw_table()
@@ -2743,7 +2757,7 @@ def main_actions():
         read_filters()
         action__select()
 
-        if ARGS.verbosity != 'none' and SELECT:
+        if CONFIG['diaplay']['verbosity'] != 'none' and SELECT:
             answer = \
                 input("\nDo you want to update the target database and to {0} the selected "
                       "files into the target directory "
@@ -2769,10 +2783,6 @@ def main_actions():
 
     if ARGS.findtag:
         action__findtag(ARGS.findtag)
-
-    if ARGS.downloaddefaultcfg is not None:
-        action__downloadefaultcfg(targetname=CST__DEFAULT_CONFIGFILE_NAME,
-                                  location=ARGS.downloaddefaultcfg)
 
 #///////////////////////////////////////////////////////////////////////////////
 def main_actions_tags():
@@ -2812,7 +2822,7 @@ def main_warmup(timestamp_start):
             o configfile_name = None / a string
             o reading of the configuration file
             o list of the expected directories : if one directory is missing, let's create it.
-              create_subdirs_in_target_path()
+              create_subdirs()
             o configure_loggers()
             o welcome_in_logfile()
             o warning if source path == target path
@@ -2852,7 +2862,7 @@ def main_warmup(timestamp_start):
         # list of the expected directories : if one directory is missing, let's
         # create it. Required to do that before initialising loggers in case
         # the .katal/logs folder doesn't exist
-        create_subdirs_in_target_path()
+        create_subdirs()
 
         # Logger initialisation :
         configure_loggers()
