@@ -197,7 +197,7 @@ CST__SQL__CREATE_DB = ('CREATE TABLE dbfiles ('
                        'size INTEGER, '
                        'targetname TEXT UNIQUE, '
                        'sourcename TEXT, '
-                       'sourcetime INTEGER, '
+                       'time INTEGER, '
                        'tagsstr TEXT)')
 
 CST__TAG_SEPARATOR = ";"  # symbol used in the database between two tags.
@@ -409,8 +409,7 @@ class Config(configparser.ConfigParser):
                 raise ConfigError
 
         if cfg_file:
-            self.read(cfg_file)
-            cfg_files.append(cfg_file)
+            cfg_files.append(self.read(cfg_file))
 
         if not cfg_files:
             print('  ! No config file has been found, ')
@@ -1049,7 +1048,7 @@ class SelectElement(SelectTuple):
 
 
     """
-    def __new__(cls, fullname, targetpath=None):
+    def __new__(cls, fullname, targetpath=None, config=None):
         fullname = normpath(fullname)
 
         data = {}
@@ -1066,8 +1065,8 @@ class SelectElement(SelectTuple):
         if targetpath is None:
             targetpath = ARGS.targetpath
         data['targetname'] = os.path.join(normpath(targetpath),
-                                          cls.create_target_name(data))
-        data['targettags'] = cls.create_target_tags(data)
+                                          cls.create_target_name(data, config))
+        data['targettags'] = cls.create_target_tags(data, config)
 
         return super().__new__(cls, **data)
 
@@ -1086,7 +1085,6 @@ class SelectElement(SelectTuple):
 
         cls._db_index += 1
         return cls._db_index
-
 
     @classmethod
     def from_db_row(cls, db_row):
@@ -1116,10 +1114,10 @@ class SelectElement(SelectTuple):
         data['targetname'] = db_row['targetname']
         data['targettags'] = db_row['tagsstr']
 
-        return super().__new__(**data)
+        return super().__new__(cls, **data)
 
     @classmethod
-    def create_target_name(cls, data):
+    def create_target_name(cls, data, config=None):
         """
             Selectelement.create_target_name(data)
             ________________________________________________________________________
@@ -1144,11 +1142,13 @@ class SelectElement(SelectTuple):
             RETURNED VALUE
                     (str)name
         """
-        return cls.add_keywords_in_targetstr(CONFIG["target"]["name of the target files"], data)
+        if config is None:
+            config = CONFIG
+        return cls.add_keywords_in_targetstr(config["target"]["name of the target files"], data)
 
     #/////////////////////////////////////////////////////////////////////////////////////////
     @classmethod
-    def create_target_tags(cls, data):
+    def create_target_tags(cls, data, config=None):
         """
             SelectElement.create_target_tags(data)
             ________________________________________________________________________
@@ -1173,7 +1173,9 @@ class SelectElement(SelectTuple):
             RETURNED VALUE
                     (str)name
         """
-        return cls.add_keywords_in_targetstr(CONFIG["target"]["tags"], data)
+        if config is None:
+            config = CONFIG
+        return cls.add_keywords_in_targetstr(config["target"]["tags"], data)
 
     @classmethod
     def add_keywords_in_targetstr(cls, srcstring, data):
@@ -1592,7 +1594,7 @@ def action__new(targetname):
         action__new()
         ________________________________________________________________________
 
-        Create a new target directory.
+        Create a new target directory, or fill it if it already exists but is empty.
         ________________________________________________________________________
 
         no PARAMETER, no RETURNED VALUE
@@ -1602,21 +1604,14 @@ def action__new(targetname):
 
     targetname = normpath(targetname)
 
-    if os.path.exists(targetname):
+    if os.path.isfile(targetname) or \
+            (os.path.isdir(targetname) and os.listdir(targetname)):
         LOGGER.warning("  ! can't go further : the directory already exists.")
-        return
+        raise FileExistsError
 
     if not ARGS.off:
         LOGGER.warning("  ... creating the target directory with its sub-directories...")
-        os.mkdir(targetname)
-        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR))
-        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR))
-        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))
-        os.mkdir(os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR))
-
-        create_empty_db(os.path.join(targetname,
-                                     CST__KATALSYS_SUBDIR,
-                                     CST__DATABASE_NAME))
+        create_empty_db(targetname)
 
     if ARGS.verbosity != 'none':
         answer = \
@@ -1652,14 +1647,12 @@ def action__rebase(newtargetpath):
 
     LOGGER.info("  = copying the current target directory into a new one.")
     LOGGER.info("    o from %s (path : \"%s\")", source_path, normpath(source_path))
-
-    LOGGER.info("    o to   %s (path : \"%s\")", newtargetpath, normpath(newtargetpath))
+    LOGGER.info("    o to   %s", newtargetpath)
 
     to_configfile = os.path.join(newtargetpath,
                                  CST__KATALSYS_SUBDIR,
                                  CST__DEFAULT_CONFIGFILE_NAME)
-    LOGGER.info("    o trying to read dest config file %s "
-                "(path : \"%s\") .", to_configfile, normpath(to_configfile))
+    LOGGER.info("    o trying to read dest config file %s ", to_configfile)
 
     dest_params = Config()
     dest_params.read_config([], to_configfile)
@@ -1677,11 +1670,12 @@ def action__rebase(newtargetpath):
     new_db = os.path.join(newtargetpath, CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
     if not ARGS.off:
         if os.path.exists(new_db):
+            LOGGER.warning("  ! Removing already existing database at %s", new_db)
             # let's delete the previous new database :
             os.remove(new_db)
 
     # let's compute the new names :
-    files, anomalies_nbr = action__rebase__files(newtargetpath)
+    files, anomalies_nbr = action__rebase__files(newtargetpath, dest_params)
 
     go_on = True
     if anomalies_nbr:
@@ -1697,7 +1691,7 @@ def action__rebase(newtargetpath):
         action__rebase__write(new_db, files)
 
 #///////////////////////////////////////////////////////////////////////////////
-def action__rebase__files(newtargetpath):
+def action__rebase__files(newtargetpath, dest_params):
     """
         action__rebase__files()
         ________________________________________________________________________
@@ -1731,7 +1725,7 @@ def action__rebase__files(newtargetpath):
     for old_element in read_target_db2():
         fullname = old_element.targetname
 
-        new_element = SelectElement(fullname, targetpath=newtargetpath)
+        new_element = SelectElement(fullname, targetpath=newtargetpath, config=dest_params)
         new_name = new_element.targetname
 
         LOGGER.info("      o %s : %s would be copied as %s",
@@ -1773,13 +1767,9 @@ def action__rebase__write(new_db, files):
     """
     # let's write the new database :
     newdb_connection = sqlite3.connect(new_db)
-    newdb_connection.row_factory = sqlite3.Row
     newdb_cursor = newdb_connection.cursor()
 
     try:
-        if not ARGS.off:
-            newdb_cursor.execute(CST__SQL__CREATE_DB)
-
         for index, futurefile in enumerate(files, 1):
 
             strdate = datetime.utcfromtimestamp(futurefile.time).strftime(CST__DTIME_FORMAT)
@@ -1834,10 +1824,6 @@ def action__reset():
         no PARAMETER, no RETURNED VALUE
     """
     LOGGER.info("    = about to delete (=move in the trash) the target files and the database.")
-
-    if not os.path.exists(get_database_fullname()):
-        LOGGER.warning("    ! no database found, nothing to do .")
-        return
 
     if ARGS.verbosity != 'none':
         answer = \
@@ -2224,7 +2210,7 @@ def clean(list_path):
             if os.path.isfile(path):
                 os.remove(path)
 
-def create_empty_db(db_name):
+def create_empty_db(targetpath=None):
     """
         create_empty_db()
         ________________________________________________________________________
@@ -2239,11 +2225,16 @@ def create_empty_db(db_name):
 
         no RETURNED VALUE
     """
+    if targetpath is None:
+        targetpath = normpath(ARGS.targetpath)
+    db_name = os.path.join(targetpath, CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
+
     LOGGER.info("  ... creating an empty database named \"%s\"...", db_name)
+
 
     if not ARGS.off:
         if not os.path.isdir(os.path.dirname(db_name)):
-            create_subdirs_in_target_path()
+            create_subdirs_in_target_path(targetpath)
 
         db_connection = sqlite3.connect(db_name)
         db_cursor = db_connection.cursor()
@@ -2256,7 +2247,7 @@ def create_empty_db(db_name):
     LOGGER.info("   ... database created")
 
 #///////////////////////////////////////////////////////////////////////////////
-def create_subdirs_in_target_path():
+def create_subdirs_in_target_path(targetpath=None):
     """
         create_subdirs_in_target_path()
         ________________________________________________________________________
@@ -2268,16 +2259,18 @@ def create_subdirs_in_target_path():
 
         no PARAMETERS, no RETURNED VALUE
     """
+    if targetpath is None:
+        targetpath = normpath(ARGS.targetpath)
     # (str)name for the message, (str)full path :
     for name, fullpath in \
-            (("target", normpath(ARGS.targetpath)),
-            ("system", os.path.join(normpath(ARGS.targetpath),
+            (("target", targetpath),
+            ("system", os.path.join(targetpath,
                                     CST__KATALSYS_SUBDIR)),
-            ("trash", os.path.join(normpath(ARGS.targetpath),
+            ("trash", os.path.join(targetpath,
                                    CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR)),
-            ("log", os.path.join(normpath(ARGS.targetpath),
+            ("log", os.path.join(targetpath,
                                  CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR)),
-            ("tasks", os.path.join(normpath(ARGS.targetpath),
+            ("tasks", os.path.join(targetpath,
                                    CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))):
         if not os.path.exists(fullpath) and not ARGS.off:
             LOGGER.info('  * Since the %s path "%s" '
@@ -2483,7 +2476,7 @@ def fill_select():
     return number_of_discarded_files
 
 #///////////////////////////////////////////////////////////////////////////////
-def get_database_fullname():
+def get_database_fullname(targetpath=None):
     """
         get_database_fullname()
         ________________________________________________________________________
@@ -2497,13 +2490,14 @@ def get_database_fullname():
         RETURNED VALUE
                 the expected string
     """
-    database_fullname = os.path.join(normpath(ARGS.targetpath),
-                                     CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
+    if targetpath is None:
+        targetpath = normpath(ARGS.targetpath)
+    db_fullname = os.path.join(targetpath, CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)
 
-    if not os.path.exists(database_fullname):
-        create_empty_db(database_fullname)
+    if not os.path.exists(db_fullname):
+        create_empty_db(targetpath)
 
-    return database_fullname
+    return db_fullname
 
 #///////////////////////////////////////////////////////////////////////////////
 def get_disk_free_space(path):
@@ -3067,10 +3061,9 @@ def remove_illegal_characters(src):
         RETURNED VALUE
                 the expected string, i.e. <src> without illegal characters.
     """
-    res = src
     for char in ("*", "/", "\\", ".", "[", "]", ":", ";", "|", "=", ",", "?", "<", ">", "-", " "):
-        res = res.replace(char, "_")
-    return res
+        src = src.replace(char, "_")
+    return src
 
 #///////////////////////////////////////////////////////////////////////////////
 def shortstr(string, max_length):
@@ -3183,10 +3176,7 @@ def show_infos_about_target_path():
         Display informations about the the target directory
         ________________________________________________________________________
 
-        no PARAMETER
-
-        RETURNED VALUE
-                (int) 0 if ok, -1 if an error occurred
+        no PARAMETER, no RETURNED VALUE
     """
     #...........................................................................
     LOGGER.info("  = informations about the \"%s\" "
@@ -3205,61 +3195,48 @@ def show_infos_about_target_path():
 
     #...........................................................................
     if not os.path.exists(normpath(ARGS.targetpath)):
-        LOGGER.warning("Can't find target path \"%s\".", ARGS.targetpath)
-        return -1
+        raise FileNotFoundError("Can't find target path \"%s\"." % ARGS.targetpath)
 
     if not os.path.isdir(normpath(ARGS.targetpath)):
-        LOGGER.warning("target path \"%s\" isn't a directory.", ARGS.targetpath)
-        return -1
+        raise NotADirectoryError("target path \"%s\" isn't a directory." % ARGS.targetpath)
 
     if not os.path.exists(os.path.join(normpath(ARGS.targetpath),
                                        CST__KATALSYS_SUBDIR, CST__DATABASE_NAME)):
         LOGGER.warning("    o no database in the target directory.")
-        return 0
 
     #...........................................................................
-    db_connection = sqlite3.connect(get_database_fullname())
-    db_connection.row_factory = sqlite3.Row
-    db_cursor = db_connection.cursor()
-
-    # there's no easy way to know the size of a table in a database,
-    # so we can't display the "empty database" warning before the following
-    # code which reads the table.
     rows_data = []
     row_index = 0
-    for db_record in db_cursor.execute('SELECT * FROM dbfiles'):
-        sourcedate = \
-            datetime.utcfromtimestamp(db_record["sourcedate"]).strftime(CST__DTIME_FORMAT)
+    for element in read_target_db2():
+        sourcedate = datetime.fromtimestamp(element.time).strftime(CST__DTIME_FORMAT)
 
         if CFG_PARAMETERS["target"]["mode"] != 'nocopy':
-            rows_data.append((db_record["hashid"],
-                              db_record["name"],
-                              tagsstr_repr(db_record["tagsstr"]),
-                              db_record["sourcename"],
+            rows_data.append((element.hashid,
+                              element.targetname,
+                              tagsstr_repr(element.tagsstr),
+                              element.srcname,
                               sourcedate))
         else:
-            rows_data.append((db_record["hashid"],
-                              tagsstr_repr(db_record["tagsstr"]),
-                              db_record["sourcename"],
+            rows_data.append((element.hashid,
+                              tagsstr_repr(element.tagsstr),
+                              element.srcname,
                               sourcedate))
         row_index += 1
 
-    db_connection.close()
-
-    if row_index == 0:
+    if not row_index:
         LOGGER.warning("    ! (empty database)")
-        return 0
+        return
 
     LOGGER.info("    o %s file(s) in the database :", row_index)
 
     targetname_maxlength = \
-            int(CFG_PARAMETERS["display"]["target filename.max length on console"])
+            CFG_PARAMETERS.getint("display", "target filename.max length on console")
     hashid_maxlength = \
-            int(CFG_PARAMETERS["display"]["hashid.max length on console"])
+            CFG_PARAMETERS.getint("display", "hashid.max length on console")
     tagsstr_maxlength = \
-            int(CFG_PARAMETERS["display"]["tag.max length on console"])
+            CFG_PARAMETERS.getint("display", "tag.max length on console")
     sourcename_maxlength = \
-            int(CFG_PARAMETERS["display"]["source filename.max length on console"])
+            CFG_PARAMETERS.getint("display", "source filename.max length on console")
 
     # beware : characters like "║" are forbidden (think to the cp1252 encoding
     # required by Windows terminal)
@@ -3276,8 +3253,6 @@ def show_infos_about_target_path():
                          ("source name", sourcename_maxlength, "|"),
                          ("source date", CST__DTIME_FORMAT_LENGTH, "|")),
                    data=rows_data)
-
-    return 0
 
 #///////////////////////////////////////////////////////////////////////////////
 def size_as_str(_size):
