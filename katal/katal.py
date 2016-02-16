@@ -654,7 +654,7 @@ class Config(configparser.ConfigParser):
             read_parameters_from_cfgfile()
             ________________________________________________________________________
 
-            Read the configfile and return the parser. If an error occured, a
+            Read the configfile and return the parser. If an error occurred, a
             ConfigError is raised.
 
             If the mode is set to 'nocopy', parser["target"]["name of the target files"]
@@ -666,7 +666,7 @@ class Config(configparser.ConfigParser):
             RETURNED VALUE
                     self
             EXCEPTION
-                    A ConfigError if an error occured while reading the configuration file
+                    A ConfigError if an error occurred while reading the configuration file
 
         """
         global USE_LOGFILE
@@ -686,13 +686,13 @@ class Config(configparser.ConfigParser):
             assert "tag.max length on console" in parser["display"]
             assert "source filename.max length on console" in parser["display"]
         except (KeyError, AssertionError) as exception:
-            print("  ! An error occured while reading config files.")
+            print("  ! An error occurred while reading config files.")
             print('  ! Your configuration file lacks a specific value : "%s".' % exception)
             print("  ... you should download a new default config file : "
                         "see -dlcfg/--downloaddefaultcfg option")
             raise ConfigError
         except configparser.Error as exception:
-            print("  ! An error occured while reading the config files.")
+            print("  ! An error occurred while reading the config files.")
             print(exception)
             raise ConfigError
 
@@ -1335,67 +1335,69 @@ def action__add():
 
         no PARAMETER, no RETURNED VALUE
     """
-    LOGGER.info("  = copying data =")
-
-    if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
-        raise KatalError("    ! Not enough space on disk. Stopping the program.")
-
-    files_to_be_added = []
-    len_select = len(SELECT)
-    for index, element in enumerate(SELECT, 1):
-
-        complete_source_filename = element.srcname
-        target_name = element.targetname
-
-        if not ARGS.off:
-            if CFG_PARAMETERS["target"]["mode"] == "nocopy":
-                # nothing to do
-                LOGGER.info("    ... (%s/%s) due to the nocopy mode argument, "
-                            "\"%s\" will be simply added "
-                            "in the target database.", index, len_select,
-                            complete_source_filename)
-
-            elif CFG_PARAMETERS["target"]["mode"] == "copy":
-                # copying the file :
-                LOGGER.info("    ... (%s/%s) about to " "copy \"%s\" to \"%s\" .",
-                            index, len_select, complete_source_filename, target_name)
-                shutil.copy2(complete_source_filename, target_name)
-
-            elif CFG_PARAMETERS["target"]["mode"] == "move":
-                # moving the file :
-                LOGGER.info("    ... (%s/%s) about to " "move \"%s\" to \"%s\" .",
-                            index, len_select, complete_source_filename, target_name)
-                # shutil.move preserve metadata
-                shutil.move(complete_source_filename, target_name)
-
-            else:
-                raise KatalError('Mode {} not valid'.format(CONFIG["target"]["mode"]))
-
-        files_to_be_added.append(element[:8])
-
-    LOGGER.info("    = all files have been copied, let's update the database...")
-
     db_connection = sqlite3.connect(get_database_fullname())
     db_cursor = db_connection.cursor()
 
+    LOGGER.info("    = let's update the database...")
     try:
         if not ARGS.off:
+            # The database is filled first so that in case of exception,
+            # nothing is done
+            files_to_be_added = (element[:8] for element in SELECT)
             db_cursor.executemany('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?,?)', files_to_be_added)
 
-    except sqlite3.IntegrityError as exception:
+
+        # Then we copy the files
+        LOGGER.info("  = copying data =")
+
+        if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
+            raise KatalError("    ! Not enough space on disk. Stopping the program.")
+
+        len_select = len(SELECT)
+        mode = CONFIG["target"]["mode"]
+        for index, element in enumerate(SELECT, 1):
+            source_filename = element.srcname
+            target_name = element.targetname
+
+            if mode == "nocopy":
+                # nothing to do
+                LOGGER.info("    ... (%s/%s) due to the nocopy mode argument, "
+                            '"%s" will be simply added in the target database.',
+                            index, len_select, source_filename)
+
+            elif mode == "copy" or mode == "move":
+                LOGGER.info('    ... (%s/%s) about to %s "%s" to "%s" .',
+                            index, len_select, mode, source_filename, target_name)
+
+                if not ARGS.off:
+                    shutil.copy2(source_filename, target_name)
+
+            else:
+                raise KatalError('Mode {} not valid'.format(mode))
+
+    except Exception as e:
+        # An error occurred, we cancel the transaction
+        db_connection.rollback()
+        # remove all previously copied files
+        clean(element.targetname for element in SELECT)
+        if isinstance(e, sqlite3.IntegrityError):
+            LOGGER.exception("!!! An error occurred while writing the database : ")
+            raise KatalError("An error occurred while writing the database.")
+
+        else:
+            LOGGER.exception('An error occurred. Aborting the file transfer')
+            raise
+
+    else:
+        # Everything OK
+        LOGGER.info("    = ... database updated.")
+        db_connection.commit()
+
+        if mode == "move":
+            # Remove all files from source
+            clean(element.srcname for element in SELECT)
+    finally:
         db_connection.close()
-
-        LOGGER.exception("!!! An error occured while writing the database : ")
-        LOGGER.error("!!! Files to be added :")
-        for file_to_be_added in files_to_be_added:
-            LOGGER.error("     ! hashid=%s; partialhashid=%s; size=%s; name=%s; sourcename=%s; "
-                         "sourcedate=%s; tagsstr=%s", *file_to_be_added)
-        raise KatalError("An error occured while writing the database.")
-
-    db_connection.commit()
-    db_connection.close()
-
-    LOGGER.info("    = ... database updated.")
 
 #///////////////////////////////////////////////////////////////////////////////
 def action__addtag(tag, dest):
@@ -1499,7 +1501,7 @@ def action__downloadefaultcfg(targetname=CST__DEFAULT_CONFIGFILE_NAME, location=
         return True
 
     except urllib.error.URLError as exception:
-        print("  ! An error occured : {0}\n"
+        print("  ! An error occurred : {0}\n"
               "  ... if you can't download the default config file, what about simply\n"
               "  ... copy another config file to the target directory ?\n"
               "  ... In a target directory, the config file is \n"
@@ -1523,17 +1525,14 @@ def action__findtag(tag):
         PARAMETER
             o tag : (str)the searched tag
 
-        no RETURNED VALUE
+        RETURNED VALUE:
+            o the list of element which have the tag "tag"
     """
     LOGGER.info("  = searching the files with the tag \"%s\"", tag)
 
-    if not os.path.exists(normpath(get_database_fullname())):
-        LOGGER.warning("    ! no database found.")
-        return
-
     res = []
     for element in read_target_db2():
-        if tag in element.targettags:
+        if tag in element.targettags.split(','):
 
             res.append(element)
             LOGGER.info("    o \"%s\" : \"%s\"",
@@ -1567,6 +1566,8 @@ def action__findtag(tag):
             if not ARGS.off:
                 shutil.copy2(src, dest)
 
+    return res
+
 #///////////////////////////////////////////////////////////////////////////////
 def action__infos():
     """
@@ -1579,7 +1580,7 @@ def action__infos():
         no PARAMETER
 
         RETURNED VALUE
-                (int) 0 if ok, -1 if an error occured
+                (int) 0 if ok, -1 if an error occurred
     """
     LOGGER.info("  = informations =", color="white")
     show_infos_about_source_path()
@@ -1627,7 +1628,7 @@ def action__new(targetname):
                 os.path.join(targetname, CST__KATALSYS_SUBDIR, CST__DEFAULT_CONFIGFILE_NAME),
                 "local")
             if not res:
-                LOGGER.warning("  ! A problem occured : "
+                LOGGER.warning("  ! A problem occurred : "
                                "the creation of the target directory has been aborted.")
 
     LOGGER.warning("  ... done with the creation of \"%s\" as a new target directory.", targetname)
@@ -1793,23 +1794,32 @@ def action__rebase__write(new_db, files):
             if not ARGS.off:
                 newdb_cursor.execute('INSERT INTO dbfiles VALUES (?,?,?,?,?,?,?,?)', futurefile[:8])
 
-        newdb_connection.commit()
+
+        # let's copy the files :
+        for index, futurefile in enumerate(files, 1):
+            old_name, new_name = futurefile.srcname, futurefile.targetname
+
+            LOGGER.info("    o (%s/%s) copying \"%s\" as \"%s\"",
+                        index, len(files), old_name, new_name)
+            if not ARGS.off:
+                shutil.copy2(old_name, new_name)
 
     except sqlite3.IntegrityError as exception:
-        LOGGER.exception("!!! An error occured while writing the new database : ")
-        raise KatalError("An error occured while writing the new database : "+str(exception))
+        newdb_connection.rollback()
+        clean(file.targetname for file in files)
+        LOGGER.exception("!!! An error occurred while writing the new database : ")
+        raise KatalError("An error occurred while writing the new database : " + str(exception))
+
+    except Exception:
+        newdb_connection.rollback()
+        clean(file.targetname for file in files)
+        LOGGER.exception("!!! An error occurred while copying the files : ")
+        raise
+
+    else:
+        newdb_connection.commit()
     finally:
         newdb_connection.close()
-
-    # let's copy the files :
-    for index, futurefile in enumerate(files, 1):
-        old_name, new_name = futurefile.srcname, futurefile.targetname
-
-        LOGGER.info("    o (%s/%s) copying \"%s\" as \"%s\"",
-                    index, len(files), old_name, new_name)
-        if not ARGS.off:
-            shutil.copy2(old_name, new_name)
-
     LOGGER.info("    ... done")
 
 #///////////////////////////////////////////////////////////////////////////////
@@ -1872,31 +1882,38 @@ def action__rmnotags():
     """
     LOGGER.info("  = removing all files with no tags (=moving them to the trash).")
 
-    if not os.path.exists(get_database_fullname()):
-        LOGGER.warning("    ! no database found.")
-    else:
-        files_to_be_removed = [element.targetname for element in read_target_db2()
-                               if not element.targettags]    # list of name
+    files_to_be_removed = [element.targetname for element in read_target_db2()
+                            if not element.targettags]    # list of name
 
-        if not files_to_be_removed:
-            LOGGER.warning("   ! no files to be removed.")
-        else:
+    target_trash = [os.path.join(normpath(ARGS.targetpath), CST__KATALSYS_SUBDIR,
+                                 CST__TRASH_SUBSUBDIR, os.path.basename(name))
+                    for name in files_to_be_removed]
+
+    if not files_to_be_removed:
+        LOGGER.warning("   ! no files to be removed.")
+    else:
+        try:
             db_connection = sqlite3.connect(get_database_fullname())
             db_cursor = db_connection.cursor()
 
-            for name in files_to_be_removed:
+            for name, target in zip(files_to_be_removed, target_trash):
                 LOGGER.info("   o removing %s from the database and from the target path", name)
                 if not ARGS.off:
                     # let's remove the file from the target directory :
-                    shutil.move(name,
-                                os.path.join(normpath(ARGS.targetpath),
-                                             CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR,
-                                             os.path.basename(name)))
+                    shutil.copy2(name,target)
 
                     # let's remove the file from the database :
                     db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
 
+        except Exception:
+            LOGGER.exception("  ! An error occurred. Reverting to previous state")
+            db_connection.rollback()
+            clean(target_trash)
+            raise
+        else:
             db_connection.commit()
+            clean(files_to_be_removed)
+        finally:
             db_connection.close()
 
 #///////////////////////////////////////////////////////////////////////////////
@@ -2189,6 +2206,24 @@ def configure_loggers():
     LOGGER.setLevel(logging.DEBUG)
 
 #///////////////////////////////////////////////////////////////////////////////
+def clean(list_path):
+    """
+    clean(list_path)
+    ___________________________________________________________________________
+
+    Clean all given paths : remove each path if it exists, else do nothing.
+    ___________________________________________________________________________
+
+    PARAMETERS :
+            o list_path : (iterable) all the paths to clean
+
+    NO RETURNED VALUE
+    """
+    if not ARGS.off:
+        for path in list_path:
+            if os.path.isfile(path):
+                os.remove(path)
+
 def create_empty_db(db_name):
     """
         create_empty_db()
@@ -2387,7 +2422,7 @@ def fill_select():
     file_not_existing = {filename for filename in name_set if not os.path.exists(filename)}
     for filename in file_not_existing:
         index += 1
-        LOGGER.warning("    ! %sbrowsing %s, an error occured : "
+        LOGGER.warning("    ! %sbrowsing %s, an error occurred : "
                        "can't read the file \"%s\"", prefix(index), source_path, filename)
 
     name_set.difference_update(file_not_existing)
@@ -2659,10 +2694,10 @@ def main(args=None):
 
     except KatalError as exception:
         if LOGGER:
-            LOGGER.exception("(%s) ! a critical error occured.\n"
+            LOGGER.exception("(%s) ! a critical error occurred.\n"
                              "Error message : %s", __projectname__, exception)
         else:
-            print("({0}) ! a critical error occured.\n"
+            print("({0}) ! a critical error occurred.\n"
                   "Error message : {1}".format(__projectname__, exception))
         sys.exit(-2)
     else:
@@ -3125,7 +3160,7 @@ def show_infos_about_source_path():
                                 "still processing...", files_number_interval)
                     files_number_interval = 0
             else:
-                LOGGER.warning("    ! browsing %s, an error occured : "
+                LOGGER.warning("    ! browsing %s, an error occurred : "
                                "can't read the file ", source_path, color='red')
                 LOGGER.warning("    \"%s\"", fullname, color='red')
 
@@ -3151,7 +3186,7 @@ def show_infos_about_target_path():
         no PARAMETER
 
         RETURNED VALUE
-                (int) 0 if ok, -1 if an error occured
+                (int) 0 if ok, -1 if an error occurred
     """
     #...........................................................................
     LOGGER.info("  = informations about the \"%s\" "
