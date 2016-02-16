@@ -129,8 +129,6 @@ logging.setLoggerClass(extra_logger(['color']))
 
 USE_LOGFILE = False     # (bool) initialized from the configuration file
 LOGGER = logging.getLogger('katal')      # base logger, will log everywhere
-FILE_LOGGER = logging.getLogger('file')  # will log only in file
-LOGFILE_SIZE = 0                         # size of the current logfile.
 
 #===============================================================================
 # type(s)
@@ -1585,7 +1583,7 @@ def action__new(targetname):
         LOGGER.info("  ... creating the target directory with its sub-directories...")
         create_empty_db(targetname)
 
-    if CONFIG['diaplay']['verbosity'] != 'none':
+    if CONFIG['display']['verbosity'] != 'none':
         answer = \
             input(("\nDo you want to download the default config file "
                    "into the expected directory ? (y/N) "))
@@ -1794,7 +1792,7 @@ def action__reset():
     """
     LOGGER.info("    = about to delete (=move in the trash) the target files and the database.")
 
-    if CONFIG['diaplay']['verbosity'] != 'none':
+    if CONFIG['display']['verbosity'] != 'none':
         answer = \
             input(("\nDo you really want to delete (=move to the katal trash directory)"
                    "the files in the target directory and the database (y/N) "))
@@ -2122,15 +2120,14 @@ def configure_loggers():
             formatter1 = logging.Formatter('%(levelname)s::%(asctime)s::  %(message)s')
             handler1.setFormatter(formatter1)
 
-            if CONFIG['diaplay']['verbosity'] == 'none':
+            if CONFIG['display']['verbosity'] == 'none':
                 handler1.setLevel(logging.INFO) # To keep a record of what is done
-            elif CONFIG['diaplay']['verbosity'] == 'nomal':
+            elif CONFIG['display']['verbosity'] == 'nomal':
                 handler1.setLevel(logging.INFO)
-            elif CONFIG['diaplay']['verbosity'] == 'high':
+            elif CONFIG['display']['verbosity'] == 'high':
                 handler1.setLevel(logging.DEBUG)
 
             LOGGER.addHandler(handler1)
-            FILE_LOGGER.addHandler(handler1)
 
         except FileNotFoundError as exception:
             print("  ! Beware, the log file can't be opened : the log messages will be displayed")
@@ -2146,11 +2143,11 @@ def configure_loggers():
     handler2 = logging.StreamHandler()
     handler2.setFormatter(formatter2)
 
-    if CONFIG['diaplay']['verbosity'] == 'none':
+    if CONFIG['display']['verbosity'] == 'none':
         handler2.setLevel(logging.ERROR) # To keep a record of what is done
-    elif CONFIG['diaplay']['verbosity'] == 'nomal':
+    elif CONFIG['display']['verbosity'] == 'nomal':
         handler2.setLevel(logging.INFO)
-    elif CONFIG['diaplay']['verbosity'] == 'high':
+    elif CONFIG['display']['verbosity'] == 'high':
         handler2.setLevel(logging.DEBUG)
 
     LOGGER.addHandler(handler2)
@@ -2158,7 +2155,6 @@ def configure_loggers():
     #...........................................................................
     # setting the threshold for each handler :
     # see https://docs.python.org/3.5/library/logging.html
-    FILE_LOGGER.setLevel(logging.DEBUG)
     LOGGER.setLevel(logging.DEBUG)
 
 #///////////////////////////////////////////////////////////////////////////////
@@ -2757,7 +2753,7 @@ def main_actions():
         read_filters()
         action__select()
 
-        if CONFIG['diaplay']['verbosity'] != 'none' and SELECT:
+        if CONFIG['display']['verbosity'] != 'none' and SELECT:
             answer = \
                 input("\nDo you want to update the target database and to {0} the selected "
                       "files into the target directory "
@@ -2841,11 +2837,8 @@ def main_warmup(timestamp_start):
     global CFG_PARAMETERS
 
     #...........................................................................
-    welcome(timestamp_start)
-
-    #...........................................................................
-    # a special case : if the options --new//--downloaddefaultcfg have been used, let's quit :
-    if ARGS.new is not None or ARGS.downloaddefaultcfg is not None:
+    # a special case : if the option --new has been used, let's quit :
+    if ARGS.new is not None:
         return
 
     #...........................................................................
@@ -2866,7 +2859,9 @@ def main_warmup(timestamp_start):
 
         # Logger initialisation :
         configure_loggers()
-        welcome_in_logfile(timestamp_start)
+
+    #...........................................................................
+    welcome(timestamp_start)
 
     if CFG_PARAMETERS["target"]["mode"] == 'move':
         LOGGER.warning("  = 'move' mode")
@@ -3373,12 +3368,8 @@ def welcome(timestamp_start):
         ________________________________________________________________________
 
         Display a welcome message with some very broad informations about the
-        program. This function may be called before reading the configuration
-        file (confer the variable CFG_PARAMETERS).
-
-        This function is called before the opening of the log file; hence, all
-        the messages are only displayed on console (see the welcome_in_logfile()
-        function)
+        program. This function must be called after reading the configuration
+        file (confer the variable CFG_PARAMETERS) and configuring logger.
         ________________________________________________________________________
 
         PARAMETER :
@@ -3393,61 +3384,30 @@ def welcome(timestamp_start):
               "(launched at {2}) ===").format(__projectname__,
                                               __version__,
                                               timestamp_start.strftime("%Y-%m-%d %H:%M:%S"))
-    print("="*len(strmsg))
-    print(strmsg)
-    print("="*len(strmsg))
+    LOGGER.debug("="*len(strmsg))
+    LOGGER.debug(strmsg)
+    LOGGER.debug("="*len(strmsg))
 
     # command line arguments :
-    print("  = command line arguments : ", sys.argv)
+    LOGGER.debug("  = command line arguments : %s", sys.argv)
 
     # if the target file doesn't exist, it will be created later by main_warmup() :
     if ARGS.new is None and ARGS.downloaddefaultcfg is None:
-        print("  = target directory given as parameter : \"{0}\" "
-              "(path : \"{1}\")".format(ARGS.targetpath, normpath(ARGS.targetpath)))
+        LOGGER.debug('  = target directory given as parameter : "%s" (path : "%s")',
+                     ARGS.targetpath, ARGS.normtargetpath)
 
         if ARGS.configfile is not None:
-            print("  = expected config file : \"{0}\" "
-                  "(path : \"{1}\")".format(ARGS.configfile, normpath(ARGS.configfile)))
+            LOGGER.debug('  = expected config file : "%s" (path : "%s")',
+                         ARGS.configfile, normpath(ARGS.configfile))
         else:
-            print("  * no config file specified on the command line : "
-                  "let's search a config file...")
+            LOGGER.debug("  * no config file specified on the command line : "
+                         "let's search a config file...")
 
     if ARGS.off:
-        print("  = --off option detected :")
-        print("  =                no file will be modified, no directory will be created")
-        print("  =                but the corresponding messages will be written in the")
-        print("  =                log file.")
-
-#///////////////////////////////////////////////////////////////////////////////
-def welcome_in_logfile(timestamp_start):
-    """
-        welcome_in_logfile()
-        ________________________________________________________________________
-
-        The function writes in the log file a welcome message with some very
-        broad informations about the program.
-
-        This function has to be called after the opening of the log file.
-        This function doesn't write anything on the console.
-
-        See welcome() function for more informations since welcome() and
-        welcome_in_logfile() do the same job, the first on console, the
-        second in the log file.
-        ________________________________________________________________________
-
-        PARAMETER :
-                o  timestamp_start : a datetime.datetime object
-
-        no RETURNED VALUE
-    """
-    FILE_LOGGER.info("=== %s v.%s " "(launched at %s) ===",
-                     __projectname__, __version__, timestamp_start.strftime("%Y-%m-%d %H:%M:%S"))
-
-    FILE_LOGGER.info("  = command line arguments : %s", sys.argv)
-
-    FILE_LOGGER.info("  = target directory given as parameter : \"%s\" "
-                     "(path : \"%s\")", ARGS.targetpath,
-                     normpath(ARGS.targetpath))
+        LOGGER.debug("  = --off option detected :")
+        LOGGER.debug("  =                no file will be modified, no directory will be created")
+        LOGGER.debug("  =                but the corresponding messages will be written in the")
+        LOGGER.debug("  =                log file.")
 
 #///////////////////////////////////////////////////////////////////////////////
 
