@@ -305,6 +305,14 @@ class Config(configparser.ConfigParser):
         self.read_parameters_from_cfgfile()
 
     def arguments_to_dict(self):
+        """
+        self.arguments_to_dict() -> dict
+
+        ________________________________________________________________________
+
+        Convert the argument to a dict ready to be parsed by self.read_dict to
+        update config.
+        """
         return {
             'display': {
                 'verbosity': self.verbosity,
@@ -350,43 +358,53 @@ class Config(configparser.ConfigParser):
             parser.error("--copyto can only be used in combination with --findtag .")
 
 #///////////////////////////////////////////////////////////////////////////////
-    def default_config(self):
+    @staticmethod
+    def default_config():
         """self.default_config() -> dict of default config"""
         return {
-        'source': {
-            'path': '.',
-            'eval': '*',
-            'strict comparison': False,
-            'read hidden files': False,
-        },
-        'target': {
-            'mode': 'copy',
-            'name of the target file': '%i.%e',
-        },
-        'log file': {
-            'use log file': True,
-            'name': 'katal.log',
-            'maximal size': 1e8,
-        },
-        'display': {
-            'target filename.max length on console': 30,
-            'source filename.max length on console': 40,
-            'hashid.max length on console': 20,
-            'tag.max length on console': 10,
-            'verbosity': 'debug',
-        },
-        'actions': {
-            'add': False,
-            'cleandbrm': False
-        },
-        'tags': {}
-    }
+            'source': {
+                'path': '.',
+                'eval': '*',
+                'strict comparison': False,
+                'read hidden files': False,
+            },
+            'target': {
+                'mode': 'copy',
+                'name of the target file': '%i.%e',
+            },
+            'log file': {
+                'use log file': True,
+                'name': 'katal.log',
+                'maximal size': 1e8,
+            },
+            'display': {
+                'target filename.max length on console': 30,
+                'source filename.max length on console': 40,
+                'hashid.max length on console': 20,
+                'tag.max length on console': 10,
+                'verbosity': 'debug',
+            },
+            'actions': {
+                'add': False,
+                'cleandbrm': False
+            },
+            'tags': {}
+        }
 
     @property
     def normtargetpath(self):
+        """self.normtargetpath -> normpath(self.targetpath)"""
         return normpath(self.targetpath)
 
     def read_all_config_files(self, cfg_file=None):
+        """
+        self.read_all_config_files()
+
+        ________________________________________________________________________
+
+        Read all default config files from self.possible_paths_to_cfg(), read
+        the config file passed as an argument, and cfg_file if provided.
+        """
         # Order matter
         config_files = self.possible_paths_to_cfg()
 
@@ -394,12 +412,12 @@ class Config(configparser.ConfigParser):
 
         if self.configfile:
             try:
-                with open(self.configfile) as f:
-                    self.read_file(f)
+                with open(self.configfile) as file:
+                    self.read_file(file)
                     cfg_files.append(self.configfile)
             except FileNotFoundError:
                 print('  ! The config file "%s" (path : "%s") '
-                    " doesn't exist. " % self.configfile, normpath(self.configfile))
+                      " doesn't exist. " % self.configfile, normpath(self.configfile))
                 raise ConfigError
 
         if cfg_file:
@@ -429,29 +447,29 @@ class Config(configparser.ConfigParser):
         parser = \
         argparse.ArgumentParser(description="{0} v. {1}".format(__projectname__, __version__),
                                 epilog="{0} v. {1} ({2}), "
-                                        "a project by {3} "
-                                        "({4})".format(__projectname__,
-                                                        __version__,
-                                                        __license__,
-                                                        __author__,
-                                                        __email__),
+                                       "a project by {3} "
+                                       "({4})".format(__projectname__,
+                                                      __version__,
+                                                      __license__,
+                                                      __author__,
+                                                      __email__),
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
         exclusive_group = parser.add_mutually_exclusive_group()
 
         exclusive_group.add_argument('--add',
-                            action="store_true",
-                            help="# Select files according to what is described "
-                                "in the configuration file "
-                                "then add them to the target directory. "
-                                "This option can't be used with the --select one."
-                                "If you want more informations about the process, please "
-                                "use this option in combination with --infos .")
+                                     action="store_true",
+                                     help="# Select files according to what is described "
+                                     "in the configuration file "
+                                     "then add them to the target directory. "
+                                     "This option can't be used with the --select one."
+                                     "If you want more informations about the process, please "
+                                     "use this option in combination with --infos .")
 
         parser.add_argument('--addtag',
                             type=str,
                             help="# Add a tag to some file(s) in combination "
-                                "with the --to option. ")
+                                 "with the --to option. ")
 
         parser.add_argument('-cfg', '--configfile',
                             type=str,
@@ -464,26 +482,26 @@ class Config(configparser.ConfigParser):
         parser.add_argument('--copyto',
                             type=str,
                             help="# To be used with the --findtag parameter. Copy the found files "
-                                "into an export directory.")
+                                 "into an export directory.")
 
         parser.add_argument('-dlcfg', '--downloaddefaultcfg',
                             choices=("local", "home",),
                             help="# Download the default config file and overwrite the file having "
-                                "the same name. This is done before the script reads the parameters "
-                                "in the config file. Use 'local' to download in the current "
-                                "directory, 'home' to download in the user's HOME directory.")
+                                 "the same name. This is done before the script reads the parameters "
+                                 "in the config file. Use 'local' to download in the current "
+                                 "directory, 'home' to download in the user's HOME directory.")
 
         parser.add_argument('--findtag',
                             type=str,
                             help="# Find the files in the target directory with the given tag. "
-                                "The tag is a simple string, not a regex.")
+                                 "The tag is a simple string, not a regex.")
 
         parser.add_argument('--infos',
                             action="store_true",
                             help="# Display informations about the source directory "
-                                "given in the configuration file. Help the --select/--add "
-                                "options to display more informations about the process : in "
-                                "this case, the --infos will be executed before --select/--add")
+                                 "given in the configuration file. Help the --select/--add "
+                                 "options to display more informations about the process : in "
+                                 "this case, the --infos will be executed before --select/--add")
 
         parser.add_argument('-n', '--new',
                             type=str,
@@ -492,18 +510,18 @@ class Config(configparser.ConfigParser):
         parser.add_argument('--off',
                             action="store_true",
                             help="# Don't write anything into the target directory or into "
-                                "the database, except into the current log file. "
-                                "Use this option to simulate an operation : you get the messages "
-                                "but no file is modified on disk, no directory is created.")
+                                 "the database, except into the current log file. "
+                                 "Use this option to simulate an operation : you get the messages "
+                                 "but no file is modified on disk, no directory is created.")
 
         parser.add_argument('--rebase',
                             type=str,
                             help="# Copy the current target directory into a new one : you "
-                                "rename the files in the target directory and in the database. "
-                                "First, use the --new option to create a new target directory, "
-                                "modify the .ini file of the new target directory "
-                                "(modify [target]name of the target files), "
-                                "then use --rebase with the name of the new target directory")
+                                 "rename the files in the target directory and in the database. "
+                                 "First, use the --new option to create a new target directory, "
+                                 "modify the .ini file of the new target directory "
+                                 "(modify [target]name of the target files), "
+                                 "then use --rebase with the name of the new target directory")
 
         parser.add_argument('--reset',
                             action="store_true",
@@ -516,25 +534,25 @@ class Config(configparser.ConfigParser):
         parser.add_argument('--rmtags',
                             action="store_true",
                             help="# Remove all the tags of some file(s) in combination "
-                                "with the --to option. ")
+                                 "with the --to option. ")
 
         exclusive_group.add_argument('-s', '--select',
-                            action="store_true",
-                            help="# Select files according to what is described "
-                                "in the configuration file "
-                                "without adding them to the target directory. "
-                                "This option can't be used with the --add one."
-                                "If you want more informations about the process, please "
-                                "use this option in combination with --infos .")
+                                     action="store_true",
+                                     help="# Select files according to what is described "
+                                     "in the configuration file "
+                                     "without adding them to the target directory. "
+                                     "This option can't be used with the --add one."
+                                     "If you want more informations about the process, please "
+                                     "use this option in combination with --infos .")
 
         parser.add_argument('--settagsstr',
                             type=str,
                             help="# Give the tag to some file(s) in combination "
-                                "with the --to option. "
-                                "Overwrite the ancient tag string. "
-                                "If you want to empty the tags' string, please use a space, "
-                                "not an empty string : otherwise the parameter given "
-                                "to the script wouldn't be taken in account by the shell")
+                                 "with the --to option. "
+                                 "Overwrite the ancient tag string. "
+                                 "If you want to empty the tags' string, please use a space, "
+                                 "not an empty string : otherwise the parameter given "
+                                 "to the script wouldn't be taken in account by the shell")
 
         parser.add_argument('-si', '--sourceinfos',
                             action="store_true",
@@ -543,14 +561,14 @@ class Config(configparser.ConfigParser):
         parser.add_argument('--strictcmp',
                             action="store_true",
                             help="# To be used with --add or --select. Force a bit-to-bit comparision"
-                                "between files whose hashid-s is equal.")
+                                 "between files whose hashid-s is equal.")
 
         parser.add_argument('--targetpath',
                             type=str,
                             default=".",
                             help="# Target path, usually '.' . If you set path to . (=dot character)"
-                                ", it means that the source path is the current directory"
-                                " (=the directory where the script katal.py has been launched)")
+                                 ", it means that the source path is the current directory"
+                                 " (=the directory where the script katal.py has been launched)")
 
         parser.add_argument('-ti', '--targetinfos',
                             action="store_true",
@@ -559,9 +577,9 @@ class Config(configparser.ConfigParser):
         parser.add_argument('-tk', '--targetkill',
                             type=str,
                             help="# Kill (=move to the trash directory) one file from "
-                                "the target directory."
-                                "DO NOT GIVE A PATH, just the file's name, "
-                                "without the path to the target directory")
+                                 "the target directory."
+                                 "DO NOT GIVE A PATH, just the file's name, "
+                                 "without the path to the target directory")
 
         parser.add_argument('--to',
                             type=str,
@@ -572,18 +590,16 @@ class Config(configparser.ConfigParser):
         parser.add_argument('--usentfsprefix',
                             action="store_true",
                             help="# Force the script to prefix filenames by a special string "
-                                "required by the NTFS for long filenames, namely \\\\?\\")
+                                 "required by the NTFS for long filenames, namely \\\\?\\")
 
         parser.add_argument('--verbosity',
                             choices=("none", "normal", "high"),
                             default='normal',
                             help="# Console verbosity : "
-                                "'none'=no output to the console, no question asked on the console; "
-                                "'normal'=messages to the console "
-                                "and questions asked on the console; "
-                                "'high'=display discarded files. A question may be asked only by "
-                                "using the following arguments : "
-                                "--new, --rebase, --reset and --select")
+                            "'none'=no output to the console, no question asked on the console; "
+                            "'normal'=messages to the console and questions asked on the console; "
+                            "'high'=display discarded files. A question may be asked only by "
+                            "using the following arguments : --new, --rebase, --reset and --select")
 
         parser.add_argument('--version',
                             action='version',
@@ -593,8 +609,8 @@ class Config(configparser.ConfigParser):
         parser.add_argument('--whatabout',
                             type=str,
                             help="# Say if the file[the files in a directory] already in the "
-                                "given as a parameter is in the target directory "
-                                "notwithstanding its name.")
+                                 "given as a parameter is in the target directory "
+                                 "notwithstanding its name.")
 
         parser.parse_args(args=args, namespace=self)
 
@@ -682,7 +698,7 @@ class Config(configparser.ConfigParser):
             print("  ! An error occurred while reading config files.")
             print('  ! Your configuration file lacks a specific value : "%s".' % exception)
             print("  ... you should download a new default config file : "
-                        "see -dlcfg/--downloaddefaultcfg option")
+                  "see -dlcfg/--downloaddefaultcfg option")
             raise ConfigError
         except configparser.Error as exception:
             print("  ! An error occurred while reading the config files.")
@@ -835,7 +851,7 @@ class Filter:
 
         PARAMETERS
                 o regex : (str) the string from config file corresponding
-                                to the condition on date (eg. .*\.jpg).
+                                to the condition on date (eg. .*\\.jpg).
 
         RETURNED VALUE
                 o function(file_name) : function which test if the file match the regex
@@ -1204,9 +1220,9 @@ class SelectElement(SelectTuple):
 
         # to don't have to compile the regex every time
         date_regex = getattr(cls, 'date_regex',
-                            re.compile(r"%d\((.*?)\)")) # Match '%d(format)'
+                             re.compile(r"%d\((.*?)\)")) # Match '%d(format)'
         ddate_regex = getattr(cls, 'ddate_regex',
-                            re.compile(r"%dd\((.*?)\)")) # Match '%d(format)'
+                              re.compile(r"%dd\((.*?)\)")) # Match '%d(format)'
         cls.date_regex = date_regex
         cls.ddate_regex = ddate_regex
 
@@ -1260,6 +1276,7 @@ class SelectElement(SelectTuple):
 
     @property
     def date(self):
+        """self.date -> last modification date formated with CST__DTIME_FORMAT"""
         return datetime.fromtimestamp(self.time).strftime(CST__DTIME_FORMAT)
     def __eq__(self, other):
         """
@@ -1361,12 +1378,12 @@ def action__add():
             else:
                 raise KatalError('Mode {} not valid'.format(mode))
 
-    except Exception as e:
+    except Exception as exception:
         # An error occurred, we cancel the transaction
         db_connection.rollback()
         # remove all previously copied files
         clean(element.targetname for element in SELECT)
-        if isinstance(e, sqlite3.IntegrityError):
+        if isinstance(exception, sqlite3.IntegrityError):
             LOGGER.exception("!!! An error occurred while writing the database : ")
             raise KatalError("An error occurred while writing the database.")
 
@@ -1584,7 +1601,7 @@ def action__new(targetname):
         no PARAMETER, no RETURNED VALUE
     """
     LOGGER.info("  = about to create a new target directory "
-                   "named \"%s\" (path : \"%s\")", targetname, normpath(targetname))
+                "named \"%s\" (path : \"%s\")", targetname, normpath(targetname))
 
     targetname = normpath(targetname)
 
@@ -1815,7 +1832,8 @@ def action__reset():
         if answer not in ("y", "yes"):
             return
 
-    files_to_be_removed = [element.targetname for element in read_target_db2()]  # a list of fullname
+    # a list of fullname
+    files_to_be_removed = [element.targetname for element in read_target_db2()]
 
     db_connection = sqlite3.connect(get_database_fullname())
     db_cursor = db_connection.cursor()
@@ -1852,7 +1870,7 @@ def action__rmnotags():
     LOGGER.info("  = removing all files with no tags (=moving them to the trash).")
 
     files_to_be_removed = [element.targetname for element in read_target_db2()
-                            if not element.targettags]    # list of name
+                           if not element.targettags]    # list of name
 
     target_trash = [os.path.join(normpath(ARGS.targetpath), CST__KATALSYS_SUBDIR,
                                  CST__TRASH_SUBSUBDIR, os.path.basename(name))
@@ -1869,7 +1887,7 @@ def action__rmnotags():
                 LOGGER.info("   o removing %s from the database and from the target path", name)
                 if not ARGS.off:
                     # let's remove the file from the target directory :
-                    copy(name,target)
+                    copy(name, target)
 
                     # let's remove the file from the database :
                     db_cursor.execute("DELETE FROM dbfiles WHERE targetname=?", (name,))
@@ -2202,7 +2220,7 @@ def copy(src, dst):
     """
     try:
         shutil.copy2(src, dst)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         if not os.path.exists(os.path.dirname(dst)):
             os.makedirs(os.path.dirname(dst))
             shutil.copy2(src, dst)
@@ -2263,14 +2281,14 @@ def create_subdirs_in_target_path(targetpath=None):
     # (str)name for the message, (str)full path :
     for name, fullpath in \
             (("target", targetpath),
-            ("system", os.path.join(targetpath,
-                                    CST__KATALSYS_SUBDIR)),
-            ("trash", os.path.join(targetpath,
-                                   CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR)),
-            ("log", os.path.join(targetpath,
-                                 CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR)),
-            ("tasks", os.path.join(targetpath,
-                                   CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))):
+             ("system", os.path.join(targetpath,
+                                     CST__KATALSYS_SUBDIR)),
+             ("trash", os.path.join(targetpath,
+                                    CST__KATALSYS_SUBDIR, CST__TRASH_SUBSUBDIR)),
+             ("log", os.path.join(targetpath,
+                                  CST__KATALSYS_SUBDIR, CST__LOG_SUBSUBDIR)),
+             ("tasks", os.path.join(targetpath,
+                                    CST__KATALSYS_SUBDIR, CST__TASKS_SUBSUBDIR))):
         if not os.path.exists(fullpath) and not ARGS.off:
             LOGGER.info('  * Since the %s path "%s" '
                         "doesn't exist, let's create it.", name, fullpath)
@@ -2672,7 +2690,7 @@ def main(args=None):
         o  sys.exit(-2) is called if a KatalError exception is raised
         o  sys.exit(-3) is called if another exception is raised
     """
-    global ARGS, CONFIG
+    global ARGS
 
     timestamp_start = datetime.now()
 
