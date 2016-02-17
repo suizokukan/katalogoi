@@ -280,9 +280,10 @@ Contributors :
                             # Console verbosity : 'none'=no output to the console,
                             no question asked on the console; 'normal'=messages to
                             the console and questions asked on the console;
-                            'high'=display discarded files. A question may be
-                            asked only by using the following arguments : --new,
-                            --rebase, --reset and --select (default: normal)
+                            'high'=display discarded files and debug messages. A
+                            question may be asked only if one of the following
+                            arguments has been given : --new, --rebase, --reset
+                            and --select (default: normal)
       --version             # Show the version and exit
       --whatabout WHATABOUT
                             # Say if the file[the files in a directory] already in
@@ -524,3 +525,12 @@ trash name is defined in the configuration file.
     o  welcome_in_logfile()                 : display a welcome message in the log file
     o  where_is_the_configfile()            : return the config file name from ARGS.configfile or
                                               from the paths returned by possible_paths_to_cfg().
+##(8.8) console colors
+
+Katal uses four different colors (see the ColorFormatter class for more details) :
+
+    * default : LOGGER.debug(), LOGGER.info()
+    * white : LOGGER.info(..., color='white')
+    * red : LOGGER.error()
+    * cyan : LOGGER.warning()
+    
