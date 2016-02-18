@@ -1437,14 +1437,13 @@ class SelectElement(SelectTuple):
 # global variables
 #===============================================================================
 
-CFG_PARAMETERS = None  # see documentation:configuration file
-                       # parameters read from the configuration file.
-                       # see the read_parameters_from_cfgfile() function
-
 CONFIG = Config() # centralize all config (command line + configuration file)
                   # see Config()
 
 ARGS = CONFIG     # parameters given on the command line; initialized by main();
+CFG_PARAMETERS = CONFIG # see documentation:configuration file
+                        # parameters read from the configuration file.
+                        # see the read_parameters_from_cfgfile() function
 
 INFOS_ABOUT_SRC_PATH = (None, None, None)  # initialized by show_infos_about_source_path()
                                            # ((int)total_size, (int)files_number, (dict)extensions)
@@ -1452,7 +1451,6 @@ INFOS_ABOUT_SRC_PATH = (None, None, None)  # initialized by show_infos_about_sou
 TARGET_DB = set()      # see documentation:database; initialized by read_target_db()
 
 SELECT = set()               # see documentation:selection; initialized by action__select()
-SELECT_SIZE_IN_BYTES = 0  # initialized by action__select()
 FILTER = None             # see documentation:selection; initialized by read_filters()
 
 
@@ -1461,8 +1459,7 @@ def action__add():
         action__add()
         ________________________________________________________________________
 
-        Add the source files described in SELECT/SELECT_SIZE_IN_BYTES to the
-        target path.
+        Add the source files described in SELECT to the target path.
         ________________________________________________________________________
 
         no PARAMETER, no RETURNED VALUE
@@ -1482,7 +1479,8 @@ def action__add():
         # Then we copy the files
         LOGGER.info("  = copying data =")
 
-        if get_disk_free_space(ARGS.targetpath) < SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
+        select_size = sum(element.size for element in SELECT)
+        if get_disk_free_space(ARGS.targetpath) < select_size * CST__FREESPACE_MARGIN:
             raise KatalError("    ! Not enough space on disk. Stopping the program.")
 
         len_select = len(SELECT)
@@ -1853,13 +1851,11 @@ def action__rebase__write(new_db, files):
 
     try:
         for index, futurefile in enumerate(files, 1):
-
-            strdate = datetime.utcfromtimestamp(futurefile.time).strftime(CST__DTIME_FORMAT)
             LOGGER.info("    o (%s/%s) adding a file in the new database", index, len(files))
             LOGGER.info("      o hashid      : %s", futurefile.hashid)
             LOGGER.info("      o source name : \"%s\"", futurefile.srcname)
             LOGGER.info("      o desti. name : \"%s\"", futurefile.targetname)
-            LOGGER.info("      o source date : %s", strdate)
+            LOGGER.info("      o source date : %s", futurefile.date)
             LOGGER.info("      o size        : %s", size_as_str(futurefile.size))
             LOGGER.info("      o tags        : \"%s\"", futurefile.targettags)
 
@@ -2008,7 +2004,7 @@ def action__select():
         action__select()
         ________________________________________________________________________
 
-        fill SELECT and SELECT_SIZE_IN_BYTES and display what's going on.
+        fill SELECT and select_size and display what's going on.
         This function will always be called before a call to action__add().
         ________________________________________________________________________
 
@@ -2018,15 +2014,14 @@ def action__select():
 
     LOGGER.info("  o the files will be copied in \"%s\" "
                 "(path: \"%s\")", ARGS.targetpath, normpath(ARGS.targetpath))
-    LOGGER.info("  o the files will be renamed according "
+    LOGGER.debug("  o the files will be renamed according "
                 "to the \"%s\" pattern.", CFG_PARAMETERS["target"]["name of the target files"])
 
-    LOGGER.info("  o file list :")
-
-    # let's initialize SELECT and SELECT_SIZE_IN_BYTES :
+    # let's initialize SELECT
     number_of_discarded_files = fill_select()
 
-    LOGGER.info("    o size of the selected file(s) : %s", size_as_str(SELECT_SIZE_IN_BYTES))
+    select_size = sum(element.size for element in SELECT)
+    LOGGER.debug("    o size of the selected file(s) : %s", size_as_str(select_size))
 
     if not SELECT:
         LOGGER.warning("    ! no file selected ! "
@@ -2041,14 +2036,14 @@ def action__select():
     # let's check that the target path has sufficient free space :
     if CFG_PARAMETERS["target"]["mode"] != "nocopy":
         available_space = get_disk_free_space(ARGS.targetpath)
-        if available_space > SELECT_SIZE_IN_BYTES * CST__FREESPACE_MARGIN:
+        if available_space > select_size * CST__FREESPACE_MARGIN:
             LOGGER.info("    o required space : %s; "
                         "available space on disk : %s (ok)",
-                        size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
+                        size_as_str(select_size), size_as_str(available_space),)
         else:
             LOGGER.error("    o required space : %s; "
                          "available space on disk : %s (!!! problem !!!)",
-                         size_as_str(SELECT_SIZE_IN_BYTES), size_as_str(available_space),)
+                         size_as_str(select_size), size_as_str(available_space),)
 
     # if there's no --add option, let's give some examples of the target names :
     if not ARGS.add and CFG_PARAMETERS["target"]["mode"] != "nocopy":
@@ -2431,7 +2426,7 @@ def draw_table(rows, data):
         draw_table()
         ________________________________________________________________________
 
-        Draw a table with some <_rows> and fill it with _data. The output is
+        Draw a table with some <rows> and fill it with data. The output is
         created by calling the LOGGER.info() function.
         ________________________________________________________________________
 
@@ -2461,15 +2456,15 @@ def draw_table(rows, data):
     # real rows' widths : it may happen that a row's width is greater than
     # the maximal value given in rows since the row name is longer than
     # this maximal value.
-    _rows = []
+    rows = []
     for row_name, row_maxlength, row_separator in rows:
-        _rows.append((row_name, max(len(row_name), row_maxlength), row_separator))
+        rows.append((row_name, max(len(row_name), row_maxlength), row_separator))
 
     # header :
     draw_line()
 
     string = " "*6 + "|"
-    for row_name, row_maxlength, row_separator in _rows:
+    for row_name, row_maxlength, row_separator in rows:
         string += " " + row_name + " "*(row_maxlength-len(row_name)+1) + row_separator
     LOGGER.info(string,
                 color="white")
@@ -2532,7 +2527,7 @@ def fill_select():
         fill_select()
         ________________________________________________________________________
 
-        Fill SELECT and SELECT_SIZE_IN_BYTES from the files stored in
+        Fill SELECT from the files stored in
         the source path. This function is used by action__select() .
         ________________________________________________________________________
 
@@ -2541,7 +2536,7 @@ def fill_select():
         RETURNED VALUE
                 (int) the number of discarded files
     """
-    global SELECT_SIZE_IN_BYTES, SELECT
+    global SELECT
 
     def prefix(index):
         # if we know the total amount of files to be selected (see the --infos option),
@@ -2621,7 +2616,6 @@ def fill_select():
 
     SELECT = filtered_elements
 
-    SELECT_SIZE_IN_BYTES = sum(element.size for element in SELECT)
     number_of_discarded_files = len(name_set) - len(SELECT)
 
     return number_of_discarded_files
@@ -3156,7 +3150,7 @@ def read_target_db(database=None):
 #/////////////////////////////////////////////////////////////////////////////////////////
 def read_target_db2(database=None):
     """
-        read_target_db()
+        read_target_db2()
         ________________________________________________________________________
 
         Read the database stored in the target directory and returned a set of
@@ -3399,7 +3393,7 @@ def show_infos_about_target_path():
                    data=rows_data)
 
 #///////////////////////////////////////////////////////////////////////////////
-def size_as_str(_size):
+def size_as_str(size):
     """
         size_as_str()
         ________________________________________________________________________
@@ -3408,37 +3402,31 @@ def size_as_str(_size):
         ________________________________________________________________________
 
         PARAMETER
-                o _size         : (int) size in bytes
-
-        About the underscore before "_size" :
-        confer https://www.python.org/dev/peps/pep-0008/#function-and-method-arguments
-          " If a function argument's name clashes with a reserved keyword, it is generally
-          " better to append a single trailing underscore rather than use an abbreviation
-          " or spelling corruption.
+                o size         : (int) size in bytes
 
         About the multiples of bytes, see e.g. https://en.wikipedia.org/wiki/Megabyte .
 
         RETURNED VALUE
                 a str(ing)
     """
-    if _size == 0:
+    if size == 0:
         res = "0 byte"
-    elif _size < 1e3:
-        res = "{0} bytes".format(_size)
-    elif _size < 1e6:
-        res = "{0} kB ({1} bytes)".format(_size/1e3, _size)
-    elif _size < 1e9:
-        res = "~{0:.2f} MB ({1} bytes)".format(_size/1e6, _size)
-    elif _size < 1e12:
-        res = "~{0:.2f} GB ({1} bytes)".format(_size/1e9, _size)
-    elif _size < 1e15:
-        res = "~{0:.2f} TB ({1} bytes)".format(_size/1e12, _size)
-    elif _size < 1e18:
-        res = "~{0:.2f} PB ({1} bytes)".format(_size/1e15, _size)
-    elif _size < 1e21:
-        res = "~{0:.2f} EB ({1} bytes)".format(_size/1e18, _size)
+    elif size < 1e3:
+        res = "{0} bytes".format(size)
+    elif size < 1e6:
+        res = "{0} kB ({1} bytes)".format(size/1e3, size)
+    elif size < 1e9:
+        res = "~{0:.2f} MB ({1} bytes)".format(size/1e6, size)
+    elif size < 1e12:
+        res = "~{0:.2f} GB ({1} bytes)".format(size/1e9, size)
+    elif size < 1e15:
+        res = "~{0:.2f} TB ({1} bytes)".format(size/1e12, size)
+    elif size < 1e18:
+        res = "~{0:.2f} PB ({1} bytes)".format(size/1e15, size)
+    elif size < 1e21:
+        res = "~{0:.2f} EB ({1} bytes)".format(size/1e18, size)
     else:
-        res = "~{0:.2f} ZB ({1} bytes)".format(_size/1e21, _size)
+        res = "~{0:.2f} ZB ({1} bytes)".format(size/1e21, size)
 
     return res
 
