@@ -220,6 +220,19 @@ def test_select6(src_dir, target_dir, conf):
     assert {e.srcname for e in katal.SELECT} == set()
     assert {e.targetname for e in katal.SELECT} == set()
 
+def test_select7(src_dir, target_dir, conf):
+    conf.targetpath = str(target_dir)
+    conf.read_dict({'source': {'eval': 'filter1 & ~(filter2 | filter3)', 'path': str(src_dir)},
+                    'source.filter1': {'iname': '.*\.1'},
+                    'source.filter2': {'iname': '.*\.2'},
+                    'source.filter3': {'iname': '.*\.3'},
+                    'target': {'name of the target files': '%n', 'tags': ''}})
+
+    katal.read_filters()
+    katal.fill_select()
+
+    assert {e.srcname for e in katal.SELECT} == {src_dir.join(f) for f in ('a.1',)}
+
 def test_subdir1(src_dir, target_dir, conf):
     conf.targetpath = str(target_dir)
     conf.read_dict({'source': {'eval': 'filter1', 'path': str(src_dir)},

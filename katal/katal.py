@@ -784,8 +784,6 @@ class Filter:
                             conditions
                 o self.name : the name of the Filter, from the name parameter.
     """
-
-    #///////////////////////////////////////////////////////////////////////////
     def __init__(self, config=None, name=''):
         self.conditions = {}
         self.name = name
@@ -1078,8 +1076,8 @@ class Filter:
                               if not test(file_name)]
 
         if list_tests_failled:
-            LOGGER.info('  o The following tests failed for filter "%s" and file "%s": '
-                        '%s', self.name, file_name, list_tests_failled)
+            LOGGER.debug('  o The following tests failed for filter "%s" and file "%s": '
+                         '%s', self.name, file_name, list_tests_failled)
             return False
         else:
             return True
@@ -1113,7 +1111,11 @@ class Filter:
 
             RETURNED VALUE : self.intersection(filter2)
         """
-        return lambda file_set: self(file_set) & filter2(file_set)
+        filter = self
+        class And(Filter):
+            def __call__(self, file_set):
+                return filter(file_set) & filter2(file_set)
+        return And()
 
     #///////////////////////////////////////////////////////////////////////////
     def __or__(self, filter2):
@@ -1129,7 +1131,11 @@ class Filter:
 
             RETURNED VALUE : self.union(filter2)
         """
-        return lambda file_set: self(file_set) | filter2(file_set)
+        filter = self
+        class Or(Filter):
+            def __call__(self, file_set):
+                return filter(file_set) | filter2(file_set)
+        return Or()
 
     #///////////////////////////////////////////////////////////////////////////
     def __xor__(self, filter2):
@@ -1145,7 +1151,11 @@ class Filter:
 
             RETURNED VALUE : self.symmetric_difference(filter2)
         """
-        return lambda file_set: self(file_set) ^ filter2(file_set)
+        filter = self
+        class Xor(Filter):
+            def __call__(self, file_set):
+                return filter(file_set) ^ filter2(file_set)
+        return Xor()
 
     #///////////////////////////////////////////////////////////////////////////
     def __invert__(self):
@@ -1160,7 +1170,11 @@ class Filter:
 
             RETURNED VALUE : file_set.differrence(self)
         """
-        return lambda file_set: file_set - self(file_set)
+        filter = self
+        class Not(Filter):
+            def __call__(self, file_set):
+                return file_set - filter(file_set)
+        return Not()
 
 
 # The order matter !
